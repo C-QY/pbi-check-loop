@@ -29,7 +29,20 @@ against Power BI Desktop with a ~910k row model.
   confirmation protocol, and ten empirically discovered pitfalls.
 - **`install.ps1`** — installs scripts and skill, verifies PowerShell syntax and UTF-8 BOM
   encoding on every installed file. Supports `-Uninstall`.
-- Bilingual documentation: `README.md` (English) and `README.zh-CN.md` (Chinese).
+- **`agents/openai.yaml`** — manifest so OpenAI-compatible agent runtimes can register the skill,
+  declaring `requires.vision: optional` since only Shot mode needs it.
+- Bilingual documentation: `README.md` (Chinese) and `README_EN.md` (English).
+
+### Notes
+
+- The watcher exits 12 s after both of its jobs finish rather than idling until the timeout.
+  Measured before the change: window restored at 3 s, dialog dismissed at 11 s, then 109 s of
+  nothing. It still falls back to the timeout when no dialog ever appears.
+- Documented that **only Shot requires a vision-capable model**. A text-only model must hand the
+  file path to the user rather than describe an image it cannot see.
+- UI Automation was probed as a text alternative to screenshots: the ribbon, menus and **dialog
+  text** are exposed, but the report canvas is an embedded WebView that yields nothing useful.
+  So error text is reachable as text; the rendered report is not.
 
 ### Known limitations
 

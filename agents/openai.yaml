@@ -1,0 +1,23 @@
+name: pbi-check-loop
+description: >-
+  Power BI Desktop control for coding agents — report whether Desktop is stale,
+  restart it so it re-reads TMDL/PBIR changed on disk, and capture its window to PNG.
+category: development
+tags:
+  - power-bi
+  - windows
+  - desktop-automation
+  - feedback-loop
+  - screenshot
+icon: 🔁
+requires:
+  platform: windows
+  shell: powershell
+  vision: optional        # only the "shot" mode needs a vision-capable model
+example_prompts:
+  - "Desktop 是最新的吗"
+  - "重开一下 Desktop"
+  - "让 Desktop 重新读盘"
+  - "看看现在报表长什么样"
+  - "reload Power BI Desktop"
+  - "check if Power BI Desktop is stale"

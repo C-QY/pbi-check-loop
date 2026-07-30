@@ -34,6 +34,25 @@ loop in two places:
 2. **The report layer emits pixels, not files.** You can write `visual.json` but cannot see
    what rendered.
 
+## Model requirements
+
+| Mode | Output | Usable by a text-only model |
+|---|---|---|
+| Check | text | ✅ yes |
+| Reload | text | ✅ yes |
+| **Shot** | **PNG image** | ❌ **no — requires vision** |
+
+🔴 **If you cannot read images, do not call Shot and then describe the report.** You would be
+inventing content, which is worse than having no screenshot at all. Instead either:
+
+- run it anyway, tell the user the file path, and ask them what they see; or
+- skip Shot and work from Check plus the user's own description.
+
+Probed 2026-07-30: UI Automation exposes the ribbon, menus, buttons, page tabs and **dialog
+text** as elements, but the report canvas is an embedded WebView whose accessibility tree yields
+nothing useful (1185 descendants, all chrome). So *error text* is in principle readable as text,
+while *what the report looks like* is not.
+
 ## Workflow
 
 ### Step 1 — Pick the mode

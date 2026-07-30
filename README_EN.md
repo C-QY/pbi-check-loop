@@ -28,10 +28,20 @@ preference; it is structural.
 
 ## What this does
 
-| Tool | Closes |
-|---|---|
-| `pbi-reload.ps1` | Gap 1 — automates close → reopen → dismiss login dialog → restore window |
-| `pbi-shot.ps1` | Gap 2 — turns on-screen pixels into a PNG the agent can read |
+Three modes:
+
+| Mode | Purpose | Script | Text-only model |
+|---|---|---|---|
+| **Check** | Report whether Desktop is stale — **are files on disk newer than the running instance** — plus PID, edition, workspace | `pbi-reload.ps1 -ListOnly` | ✅ |
+| **Reload** | Restart Desktop so it re-reads disk: close → reopen → dismiss sign-in dialog → restore window placement | `pbi-reload.ps1 -Yes` | ✅ |
+| **Shot** | Capture the window to PNG so the agent sees what rendered | `pbi-shot.ps1` | ❌ **needs vision** |
+
+**Check gates Reload.** If nothing changed on disk, reloading only costs the user a full model
+load for nothing.
+
+> ⚠️ **Only Shot depends on a multimodal model.** A text-only model that calls it cannot see the
+> image yet may invent its contents — worse than having no screenshot. SKILL.md requires such a
+> model to hand over the file path and ask the user instead of describing the image itself.
 
 Previously, each iteration required six human actions: notice the agent finished → close Desktop
 (correctly deciding whether to save) → wait for reload → dismiss the login dialog → drag the
