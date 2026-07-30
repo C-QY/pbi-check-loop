@@ -14,10 +14,7 @@ description: >-
 
 version: 1.0.0
 license: MIT
-allowed_tools: [PowerShell, Read]
-resources:
-  - scripts/pbi-reload.ps1
-  - scripts/pbi-shot.ps1
+allowed-tools: [PowerShell, Read]
 ---
 
 ## Why this exists
@@ -163,9 +160,8 @@ and let the user judge — do not invent a standard.
 and tell the user what you tried and what you are seeing. Iterating further burns a full model
 load each time and rarely finds a problem the third pass will.
 
-**Do NOT read the scripts into context — execute them.** `pbi-reload.ps1` is ~330 lines,
-`pbi-shot.ps1` ~130. This document states everything needed to call them. Read the source only
-to modify it.
+**Do NOT read the scripts into context — execute them.** They are a few hundred lines each.
+This document states everything needed to call them. Read the source only to modify it.
 
 **Treat captures as confidential.** A Power BI window shows live business data —
 revenue, supplier names, part numbers, customers. Therefore:
