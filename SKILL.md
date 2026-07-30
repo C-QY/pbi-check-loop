@@ -180,6 +180,11 @@ revenue, supplier names, part numbers, customers. Therefore:
 
 **Be proactive.** After editing TMDL, offer the reload yourself; do not wait to be asked.
 
+**Several agents, one machine.** `pbi-reload.last.json` (the remembered path) is shared across
+every user of the tool. When multiple agents develop different reports on one machine, always
+pass `-Path` explicitly — and `-Id` when several Desktop instances run — so you never kill
+another agent's instance.
+
 **Match the user's language.** Chinese in, Chinese out.
 
 ## Failure handling

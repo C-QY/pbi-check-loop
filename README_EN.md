@@ -112,6 +112,10 @@ Desktop's title bar carries no modified marker and window enumeration exposes no
 **Only a human knows.** So the confirmation cannot be skipped — and it should not be a GUI popup
 either (that interrupts); it belongs in the conversation.
 
+> **Several agents on one machine:** always pass `-Path` explicitly (plus `-Id` when several
+> instances run). The remembered path in `pbi-reload.last.json` is shared machine-wide —
+> omit it and you may reload another agent's project.
+
 ## The generalizable part
 
 > Any GUI development tool that ① keeps state in its own memory rather than on disk, and

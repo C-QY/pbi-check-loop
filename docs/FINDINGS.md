@@ -9,6 +9,11 @@ Do not reintroduce it.
 🔴 **Never call `SetForegroundWindow`.** The user may be working on another monitor; stealing
 focus interrupts them. `PrintWindow` does not need it.
 
+🔴 **Shared state on multi-agent machines.** `pbi-reload.last.json` is one file per machine —
+an agent passing `-Path` for its own project overwrites what another agent remembered. Callers
+must pass `-Path` (and `-Id` when several instances run). Candidate improvement: infer the
+instance from `-Path` via a window-title match so `-Id` becomes unnecessary.
+
 
 Notes for anyone modifying `scripts/*.ps1`. Not needed to *call* the tools — kept out of
 SKILL.md so it does not load into an agent's context on every invocation.
