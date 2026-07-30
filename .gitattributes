@@ -1,0 +1,8 @@
+# Normalize line endings in the repository.
+* text=auto eol=lf
+
+# PowerShell scripts must keep CRLF — they are consumed by Windows PowerShell 5.1.
+*.ps1 text eol=crlf
+
+# Mark generated/vendored paths so GitHub language stats stay meaningful.
+*.md linguist-documentation

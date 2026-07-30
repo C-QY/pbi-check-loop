@@ -1,0 +1,12 @@
+{
+  "name": "pbi-check-loop",
+  "description": "Power BI Desktop control for AI agents — reload Desktop so it re-reads TMDL/PBIR changed on disk, and capture the window to PNG so the agent can see what actually rendered. Closes the feedback loop that breaks when an LLM develops Power BI reports. Windows only.",
+  "version": "1.0.0",
+  "author": {
+    "name": "C-QY",
+    "url": "https://github.com/C-QY"
+  },
+  "homepage": "https://github.com/C-QY/pbi-check-loop",
+  "repository": "https://github.com/C-QY/pbi-check-loop",
+  "license": "MIT"
+}
