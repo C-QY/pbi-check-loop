@@ -1,14 +1,18 @@
 ﻿<#
 .SYNOPSIS
-    截取 Power BI Desktop 窗口为 PNG，供 Claude 直接查看渲染结果。
+    把 Power BI Desktop 窗口截成 PNG，供 agent 直接查看渲染结果。
 
 .DESCRIPTION
     报表层（visual 渲染）在 pbip 源文件上看不出效果，只能看实际画面。
-    这个脚本把 Desktop 窗口抓成 PNG，Claude 用 Read 工具能直接看图，
+    这个脚本把 Desktop 窗口抓成 PNG，agent 用 Read 工具能直接看图，
     从而对报表层也形成「改 → 看 → 再改」的闭环。
 
-    优先用 PrintWindow（可抓被部分遮挡的窗口），拿到空白图则退回
-    CopyFromScreen（抓屏幕像素，要求窗口可见不被挡）。
+    优先用 PrintWindow（可抓被部分遮挡、非前台的窗口），拿到近乎纯色的图
+    则退回 CopyFromScreen（抓屏幕像素，要求窗口可见不被挡）。
+
+    ⭐ 截图时会顺手检测有没有对话框，有就把它的文字一并输出 ——
+       报错弹窗的文字用文本拿到远比从图片认字可靠，而这个检测只花 20~130 ms
+       （截图本身约 1100 ms），占比可忽略；没有对话框就什么都不输出。
 
 .PARAMETER Out
     输出 PNG 路径。默认 %TEMP%\pbi-shot.png
@@ -18,17 +22,27 @@
 
 .PARAMETER FullScreen
     截整个虚拟屏幕，而不是只截 Desktop 窗口。
+    ⚠️ 会拍到用户屏幕上的一切，涉及隐私，默认别用。
+
+.PARAMETER Text
+    不截图，改用 UI Automation 把窗口文字读成纯文本。
+    供**无视觉能力的模型**读报错用 —— 图片它看不见，文字可以。
+    读得到：对话框文字、字段/表树、以及**报表画布内容**——视觉对象标题、
+            矩阵列头、单元格数值都在（内嵌 WebView 的无障碍树是暴露的）。
+    读不到：布局、配色、间距。即「报表说了什么」能读，「长什么样」不能。
+    ⚠️ 输出含真实业务数据，与截图同等对待：不外发、不入库。
 
 .EXAMPLE
     .\pbi-shot.ps1
     .\pbi-shot.ps1 -Out D:\tmp\a.png
-    .\pbi-shot.ps1 -FullScreen
+    .\pbi-shot.ps1 -Text
 #>
 [CmdletBinding()]
 param(
     [string]$Out = (Join-Path $env:TEMP 'pbi-shot.png'),
     [int]$Id,
-    [switch]$FullScreen
+    [switch]$FullScreen,
+    [switch]$Text
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,6 +65,92 @@ public class Shot {
 }
 '@ -ErrorAction SilentlyContinue
 
+function Get-TargetPid {
+    $procs = @(Get-Process -Name 'PBIDesktop' -ErrorAction SilentlyContinue)
+    if ($procs.Count -eq 0) { throw 'Power BI Desktop 未运行。' }
+    if ($Id) { $procs = @($procs | Where-Object { $_.Id -eq $Id }) }
+    if ($procs.Count -eq 0) { throw "找不到 PID $Id。" }
+    return $procs[0].Id
+}
+
+# ============================================================
+#  UI Automation：读窗口文字
+# ============================================================
+function Get-TopWindows([int]$ProcId) {
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction SilentlyContinue
+    $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $ProcId)
+    $tops = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)
+
+    $main = $null; $dialogs = @()
+    foreach ($w in $tops) {
+        if ($w.Current.Name -like '*Power BI Desktop') { $main = $w } else { $dialogs += $w }
+    }
+    return [pscustomobject]@{ Main = $main; Dialogs = $dialogs }
+}
+
+# $Only 不为空时只保留这些 ControlType。
+# 无对话框时用它滤掉功能区按钮/分组/页签这类静态噪音 —— 它们每次都一样，
+# 白占几十行上下文（设计原则：轻量）。
+function Write-UiaTree($el, [int]$Cap, $Only) {
+    $kids = $el.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                        [System.Windows.Automation.Condition]::TrueCondition)
+    $seen = @{}; $n = 0
+    foreach ($e in $kids) {
+        $nm = $e.Current.Name
+        if (-not $nm -or $nm.Trim() -eq '') { continue }
+        if ($seen.ContainsKey($nm)) { continue }
+        $seen[$nm] = $true
+        $ct = $e.Current.ControlType.ProgrammaticName -replace 'ControlType\.', ''
+        if ($Only -and ($Only -notcontains $ct)) { continue }
+        if ($nm.Length -gt 200) { $nm = $nm.Substring(0, 200) + '…' }
+        Write-Output ("    [{0,-11}] {1}" -f $ct, $nm)
+        $n++
+        if ($n -ge $Cap) { Write-Output "    …已截断（达上限 $Cap）"; break }
+    }
+    if ($n -eq 0) { Write-Output '    (无可读文字)' }
+}
+
+# 有对话框就把它的文字打出来。返回是否找到。
+function Show-DialogText($wins) {
+    if ($wins.Dialogs.Count -eq 0) { return $false }
+    Write-Output ""
+    Write-Output ("⚠ 检测到 " + $wins.Dialogs.Count + " 个对话框，文字如下：")
+    foreach ($d in $wins.Dialogs) {
+        $t = $d.Current.Name; if (-not $t) { $t = '(无标题)' }
+        Write-Output ""
+        Write-Output ("=== 对话框：" + $t + " ===")
+        Write-UiaTree $d 120 $null
+    }
+    return $true
+}
+
+# ============================================================
+#  -Text：纯文本模式
+# ============================================================
+if ($Text) {
+    $tp = Get-TargetPid
+    $wins = Get-TopWindows $tp
+    Write-Output ("PID    : " + $tp)
+    Write-Output ("主窗口 : " + $(if ($wins.Main) { $wins.Main.Current.Name } else { '(未找到，可能还在加载)' }))
+
+    if (-not (Show-DialogText $wins)) {
+        if ($wins.Main) {
+            Write-Output ""
+            Write-Output "无对话框。只列内容类元素（已滤掉功能区按钮等静态噪音）："
+            Write-Output ""
+            Write-UiaTree $wins.Main 40 @('TreeItem', 'Edit', 'Document', 'DataItem', 'ListItem')
+        }
+    }
+    Write-Output ""
+    Write-Output "提示：要看报表渲染成什么样，必须用截图（去掉 -Text），且需要多模态模型。"
+    return
+}
+
+# ============================================================
+#  截图
+# ============================================================
 function Save-Png($bmp, $path) {
     $dir = Split-Path $path -Parent
     if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -84,12 +184,8 @@ if ($FullScreen) {
     return
 }
 
-# ---------- 找 Desktop 主窗口 ----------
-$procs = @(Get-Process -Name 'PBIDesktop' -ErrorAction SilentlyContinue)
-if ($procs.Count -eq 0) { throw "Power BI Desktop 未运行。" }
-if ($Id) { $procs = @($procs | Where-Object { $_.Id -eq $Id }) }
-if ($procs.Count -eq 0) { throw "找不到 PID $Id。" }
-$targetPid = [uint32]$procs[0].Id
+# ---------- 找主窗口 ----------
+$targetPid = [uint32](Get-TargetPid)
 
 $found = New-Object System.Collections.ArrayList
 $cb = [Shot+EnumWindowsProc]{
@@ -104,7 +200,7 @@ $cb = [Shot+EnumWindowsProc]{
     return $true
 }
 [void][Shot]::EnumWindows($cb, [IntPtr]::Zero)
-if ($found.Count -eq 0) { throw "找不到 PBIDesktop 主窗口（可能还在加载）。" }
+if ($found.Count -eq 0) { throw '找不到 PBIDesktop 主窗口（可能还在加载）。' }
 
 $win = $found[0]
 $hwnd = $win.Handle
@@ -147,3 +243,8 @@ Save-Png $bmp $Out
 Write-Output ("{0}  {1}x{2}  方式={3}" -f $win.Title, $w, $h, $method)
 Write-Output $Out
 $bmp.Dispose()
+
+# ---------- 顺手把对话框文字也给出来 ----------
+# 报错弹窗的文字用文本拿到远比从图片认字可靠；检测只花 20~130 ms，
+# 相比截图的 ~1100 ms 可忽略。没有对话框就什么都不输出，不占上下文。
+try { [void](Show-DialogText (Get-TopWindows $targetPid)) } catch { }

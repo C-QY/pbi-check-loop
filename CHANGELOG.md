@@ -40,9 +40,15 @@ against Power BI Desktop with a ~910k row model.
   nothing. It still falls back to the timeout when no dialog ever appears.
 - Documented that **only Shot requires a vision-capable model**. A text-only model must hand the
   file path to the user rather than describe an image it cannot see.
-- UI Automation was probed as a text alternative to screenshots: the ribbon, menus and **dialog
-  text** are exposed, but the report canvas is an embedded WebView that yields nothing useful.
-  So error text is reachable as text; the rendered report is not.
+- **`pbi-shot.ps1 -Text`** reads the window through UI Automation instead of capturing pixels,
+  so a model without vision can still work. It reaches dialog text, the field/table tree, and —
+  contrary to a first shallow probe — **the report canvas as well**: visual titles, matrix column
+  headers and cell values are all exposed through the embedded WebView's accessibility tree.
+  The real boundary is semantics vs. presentation: text tells you what the report *says*, only an
+  image tells you how it *looks*.
+- Screenshot runs now **append dialog text automatically when a dialog is present**. Detection
+  costs 20–130 ms against a ~1100 ms capture, and error text read as text beats reading it off
+  an image. Nothing is printed when no dialog is up.
 
 ### Known limitations
 

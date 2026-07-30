@@ -40,18 +40,37 @@ loop in two places:
 |---|---|---|
 | Check | text | ✅ yes |
 | Reload | text | ✅ yes |
-| **Shot** | **PNG image** | ❌ **no — requires vision** |
+| **Shot** (default) | **PNG image** | ❌ **no — requires vision** |
+| **Shot `-Text`** | text (UI Automation dump) | ✅ yes |
 
 🔴 **If you cannot read images, do not call Shot and then describe the report.** You would be
-inventing content, which is worse than having no screenshot at all. Instead either:
+inventing content, which is worse than having no screenshot at all. Use `-Text` instead, or hand
+the PNG path to the user and ask what they see.
 
-- run it anyway, tell the user the file path, and ask them what they see; or
-- skip Shot and work from Check plus the user's own description.
+**What `-Text` reaches** (probed 2026-07-30): more than expected. The report canvas is an
+embedded WebView and **its accessibility tree is exposed** — visual titles, matrix column
+headers, and actual cell values all come back as text, alongside dialog text and the
+field/table tree.
 
-Probed 2026-07-30: UI Automation exposes the ribbon, menus, buttons, page tabs and **dialog
-text** as elements, but the report canvas is an embedded WebView whose accessibility tree yields
-nothing useful (1185 descendants, all chrome). So *error text* is in principle readable as text,
-while *what the report looks like* is not.
+| Question | Text-only model |
+|---|---|
+| What does this error say? | ✅ `-Text` |
+| Which visuals are on the page, with what columns? | ✅ `-Text` |
+| What value is in this cell? | ✅ `-Text` |
+| Which tables/relationships exist? | ✅ `-Text` |
+| Do the numbers tie out? | ✅ ADOMD DAX against the live model |
+| Are fields bound / visuals off-canvas? | ✅ read back the PBIR JSON it just wrote |
+| **Layout, colours, spacing — does it match the mockup?** | ❌ **vision only** |
+
+So the boundary is not "content vs. nothing" but **semantics vs. presentation**: text gives you
+what the report *says*, only an image gives you how it *looks*.
+
+Sometimes `-Text` is *more* precise than the image: a table name the screenshot truncated to
+`PUR_DAILY_STOCK_DE…` comes back in full as `PUR_DAILY_STOCK_DETAIL`.
+
+🔴 **`-Text` output is business data.** It returns real material codes, company names and
+amounts — treat it exactly like a screenshot: never publish it, never commit it, quote only the
+values the question requires.
 
 ## Workflow
 
