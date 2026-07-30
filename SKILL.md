@@ -5,7 +5,9 @@ description: >-
   Three modes — Check: report whether Desktop is stale, i.e. whether files on disk are newer
   than the running instance, plus edition, PID and workspace. Reload: restart Desktop so it
   re-reads changed TMDL/PBIR, auto-dismissing the sign-in dialog and restoring window placement.
-  Shot: capture the Desktop window to PNG so the agent can see what actually rendered.
+  Shot: capture the Desktop window to PNG so the agent can see what actually rendered —
+  or with -Text, read it through UI Automation as plain text (dialog and error text, visual
+  titles, column headers, cell values) so a model without vision can work too.
   Trigger — check: "Desktop 是最新的吗", "需要重载吗", "看下 pbi 状态", "is Desktop stale",
   "check pbi state". Also run this automatically before any reload.
   Trigger — reload: after editing TMDL/measures/PBIR when the effect must be seen in Desktop,
@@ -33,44 +35,6 @@ loop in two places:
    <kbd>Ctrl</kbd>+<kbd>S</kbd> then, **the stale model overwrites your disk changes**.
 2. **The report layer emits pixels, not files.** You can write `visual.json` but cannot see
    what rendered.
-
-## Model requirements
-
-| Mode | Output | Usable by a text-only model |
-|---|---|---|
-| Check | text | ✅ yes |
-| Reload | text | ✅ yes |
-| **Shot** (default) | **PNG image** | ❌ **no — requires vision** |
-| **Shot `-Text`** | text (UI Automation dump) | ✅ yes |
-
-🔴 **If you cannot read images, do not call Shot and then describe the report.** You would be
-inventing content, which is worse than having no screenshot at all. Use `-Text` instead, or hand
-the PNG path to the user and ask what they see.
-
-**What `-Text` reaches** (probed 2026-07-30): more than expected. The report canvas is an
-embedded WebView and **its accessibility tree is exposed** — visual titles, matrix column
-headers, and actual cell values all come back as text, alongside dialog text and the
-field/table tree.
-
-| Question | Text-only model |
-|---|---|
-| What does this error say? | ✅ `-Text` |
-| Which visuals are on the page, with what columns? | ✅ `-Text` |
-| What value is in this cell? | ✅ `-Text` |
-| Which tables/relationships exist? | ✅ `-Text` |
-| Do the numbers tie out? | ✅ ADOMD DAX against the live model |
-| Are fields bound / visuals off-canvas? | ✅ read back the PBIR JSON it just wrote |
-| **Layout, colours, spacing — does it match the mockup?** | ❌ **vision only** |
-
-So the boundary is not "content vs. nothing" but **semantics vs. presentation**: text gives you
-what the report *says*, only an image gives you how it *looks*.
-
-Sometimes `-Text` is *more* precise than the image: a table name the screenshot truncated to
-`PUR_DAILY_STOCK_DE…` comes back in full as `PUR_DAILY_STOCK_DETAIL`.
-
-🔴 **`-Text` output is business data.** It returns real material codes, company names and
-amounts — treat it exactly like a screenshot: never publish it, never commit it, quote only the
-values the question requires.
 
 ## Workflow
 
@@ -127,17 +91,41 @@ name when done.
 ### Step 4 — Shot
 
 ```powershell
-& "$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Out "<scratch>\pbi.png"
+& "$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Out "<scratch>\pbi.png"   # image
+& "$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Text                      # plain text
 ```
 
-Then read the PNG with the Read tool. Uses `PrintWindow`, so it captures non-foreground and
-even occluded windows without stealing focus.
+Image mode uses `PrintWindow`, capturing non-foreground and even occluded windows without
+stealing focus; read the PNG with the Read tool. **If a dialog is open, its text is printed
+automatically alongside the image** — an error read as text beats reading it off pixels.
 
 | Parameter | Meaning |
 |---|---|
 | `-Out` | Output path. Default `%TEMP%\pbi-shot.png` |
+| `-Text` | Read the window via UI Automation instead of capturing pixels |
 | `-Id` | Which instance, when several run |
 | `-FullScreen` | All monitors instead of the window — privacy-sensitive, avoid by default |
+
+**Pick the channel by what you are asking:**
+
+| Question | Use |
+|---|---|
+| What does this error say? | `-Text` |
+| Which visuals are on the page, with what columns? What value is in this cell? | `-Text` |
+| Which tables and relationships exist? | `-Text` |
+| Do the numbers tie out? | ADOMD DAX against the live model (not this skill) |
+| Are fields bound / visuals off-canvas? | read back the PBIR JSON you just wrote |
+| **Layout, colours, spacing — does it match the mockup?** | **image + vision** |
+
+The boundary is **semantics vs. presentation**: text gives what the report *says*, only an image
+gives how it *looks*. Text is sometimes the more precise of the two — a name the screenshot
+truncated to `PUR_DAILY_STOCK_DE…` comes back whole as `PUR_DAILY_STOCK_DETAIL`.
+
+🔴 **If you cannot read images, never call image mode and then describe the report** — you would
+be inventing content. Use `-Text`, or hand the PNG path to the user and ask what they see.
+
+🔴 **`-Text` output is business data** — real material codes, company names, amounts. Handle it
+exactly like a screenshot: never publish, never commit, quote only what the question needs.
 
 ### Step 5 — Report back
 
@@ -170,12 +158,13 @@ exposes no dirty state:
 ⚠️ **Do not assume "the user never edits in Desktop."** That assumption was empirically
 falsified — polishing the report layer is the user's job by design.
 
-🔴 **No GUI prompts inside the scripts** (`Popup`, `MessageBox`, `Read-Host`). Confirmation
-belongs in the conversation. A popup version was built and rejected twice, then removed.
-Do not reintroduce it.
+**Compare against something.** A screenshot on its own is not a verdict. If a prototype or
+mockup exists, compare to it and name the differences. If none exists, report what you observe
+and let the user judge — do not invent a standard.
 
-🔴 **Never call `SetForegroundWindow`.** The user may be working on another monitor; stealing
-focus interrupts them. `PrintWindow` does not need it.
+**Stop after two failed rounds.** If two edit → reload → shot cycles have not converged, stop
+and tell the user what you tried and what you are seeing. Iterating further burns a full model
+load each time and rarely finds a problem the third pass will.
 
 **Do NOT read the scripts into context — execute them.** `pbi-reload.ps1` is ~330 lines,
 `pbi-shot.ps1` ~130. This document states everything needed to call them. Read the source only
@@ -210,49 +199,9 @@ revenue, supplier names, part numbers, customers. Therefore:
 
 Watcher log: `~\.claude\tools\pbi-reload.dialogs.log`. Read it only when diagnosing.
 
-## What this cannot do
+## Maintaining these scripts
 
-- **No interaction.** No scrolling, clicking, page switching, expanding filters. You see only
-  the current screen — if the problem is elsewhere, ask the user to navigate there first.
-  A collapsed error-details pane stays unreadable to you.
-- **No speed-up of model load** — still the dominant cost per iteration.
-- **Report-layer editing is unaffected**; this solves *seeing*, not *changing*.
-
-## Empirical findings
-
-Read before modifying the scripts. Each cost a debugging cycle; several describe bugs already
-fixed — do not reintroduce them.
-
-1. **The sign-in dialog appears on an ~11 second delay**, not at launch. Logic that exits once
-   "the main window has been responsive for 3 seconds" never catches it.
-2. **Its window title is exactly `登录到 Power BI`**, class `WindowsForms10.Window.20008.app.*`.
-   Match on title — it never misfires on the user's own Options dialog. Close with
-   `PostMessage WM_CLOSE`, equivalent to clicking × i.e. Cancel.
-3. **The watcher must be a detached process**
-   (`Start-Process powershell -File $PSCommandPath -WatchPid`). `Start-Job` dies with the
-   calling session, and an agent's every invocation is its own session.
-4. **Window restoration cannot be applied once.** Desktop resets its own window state while
-   loading, clobbering the restore. Reapply in a loop.
-5. **`IsZoomed` returning `True` does not mean the window is maximized.** Observed: flag set
-   while the window sat at the temporary 800×600. Judge by "final rectangle ≈ original
-   rectangle", never by the state flag.
-6. **Do not verify too early.** Measured 798×600 three seconds after launch; the settled value
-   was 1508×900. Watch the full restore window (45 s) before concluding.
-7. Maximize retry must be **`SW_RESTORE` → `MoveWindow` → `SW_MAXIMIZE`**. Without the restore
-   step the latter two silently do nothing.
-8. **Restoration is monitor-agnostic** — it records and replays the actual rectangle, so it
-   works on any display. Verified on a 2560×1440 external monitor and a 1493×933 laptop panel.
-9. **Scripts containing non-ASCII text must be saved as UTF-8 *with* BOM**, or PowerShell 5.1
-   misreads them as GBK and parsing fails. Write them with Python's `utf-8-sig`.
-10. Every restart leaves a stale folder under
-    `%LOCALAPPDATA%\Microsoft\Power BI Desktop\AnalysisServicesWorkspaces\`. These accumulate;
-    not cleaned automatically, since deleting one still in use would be destructive.
-
-## Unresolved
-
-The root cause of the sign-in dialog appearing on every launch was **not identified**.
-Ruled out: sensitivity-label preview feature, Translytical task flow, all Copilot preview
-features. `FeatureSwitches.xml` stores GUIDs with no name mapping; trace logs stay empty unless
-the registry value `TracingEnabled` is set to 1 first (not attempted).
-
-**Usage is unaffected** — dismissal matches on window title and is indifferent to cause.
+Ten empirically discovered pitfalls (dialog timing, detached watcher, `IsZoomed` lying about
+maximized state, verifying too early, BOM requirements) and the unresolved sign-in-dialog root
+cause live in [`docs/FINDINGS.md`](docs/FINDINGS.md). **Read it only if you are modifying the
+scripts** — calling them does not require it.
