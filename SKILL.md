@@ -4,7 +4,8 @@ description: >-
   Closes the feedback loop that breaks when an AI develops Power BI reports, so the model iterates
   by itself instead of a human repeatedly closing, reopening and eye-checking Desktop after every
   edit. Checks whether files on disk are newer than the running instance. Reloads Desktop so it
-  re-reads changed TMDL and PBIR, auto-dismissing the sign-in dialog and restoring window placement.
+  re-reads changed TMDL and PBIR, restoring window placement and dismissing the sign-in dialog
+  when the environment shows one (signed-in users never see it).
   Captures the window as a PNG, or with -Text reads it through UI Automation as plain text so a
   model without vision works too. Use when editing TMDL, measures or PBIR; when the user says
   “重开一下 Desktop”, “让 Desktop 重新读盘”, “重载一下”, “reload pbi”; on “Desktop 是最新的吗”, “需要重载吗”, “check pbi state”;
@@ -66,7 +67,9 @@ Pass `-Yes` only after they answer no. See [Rules](#rules) for why this cannot b
 ```
 
 `Stop-Process` (no save, no dialog) → clean up `msmdsrv` → reopen with **the same edition**,
-auto-detected → a detached watcher dismisses the sign-in dialog and restores window placement.
+auto-detected → a detached watcher restores window placement and, if your environment shows a
+sign-in dialog at launch, dismisses it (some environments never show one; that branch simply
+does nothing).
 Returns in ~2 s; the watcher continues in the background.
 
 | Parameter | Meaning |

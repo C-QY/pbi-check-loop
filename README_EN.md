@@ -1,6 +1,7 @@
 # pbi-check-loop
 
-Power BI Desktop control tools **for AI agents**. Closes the feedback loop that breaks when an
+Power BI Desktop control tools **for AI agents** — **loop engineering** for Power BI
+development: give the agent back the edit → observe → judge → iterate loop that breaks when an
 LLM develops Power BI reports.
 
 **[中文 →](README.md)** · Windows only · PowerShell 5.1+
@@ -28,12 +29,16 @@ preference; it is structural.
 
 ## What this does
 
+Together the three modes close a loop: **agent edits on disk → reload → self-check the capture →
+compare against the oracle (prototype/expectation) → next round of edits.** The human stays
+outside the loop, answering a single question: "any unsaved changes in Desktop?"
+
 Three modes:
 
 | Mode | Purpose | Script | Text-only model |
 |---|---|---|---|
 | **Check** | Report whether Desktop is stale — **are files on disk newer than the running instance** — plus PID, edition, workspace | `pbi-reload.ps1 -ListOnly` | ✅ |
-| **Reload** | Restart Desktop so it re-reads disk: close → reopen → dismiss sign-in dialog → restore window placement | `pbi-reload.ps1 -Yes` | ✅ |
+| **Reload** | Restart Desktop so it re-reads disk: close → reopen → restore window placement (also dismisses the sign-in dialog — only some environments show one) | `pbi-reload.ps1 -Yes` | ✅ |
 | **Shot** | Capture the window to PNG so the agent sees what rendered | `pbi-shot.ps1` | ❌ **needs vision** |
 
 **Check gates Reload.** If nothing changed on disk, reloading only costs the user a full model
@@ -44,8 +49,9 @@ load for nothing.
 > model to hand over the file path and ask the user instead of describing the image itself.
 
 Previously, each iteration required six human actions: notice the agent finished → close Desktop
-(correctly deciding whether to save) → wait for reload → dismiss the login dialog → drag the
-window back if it jumped monitors → look at the result and **describe it back to the agent**.
+(correctly deciding whether to save) → wait for reload → dismiss the login dialog (absent in
+environments that don't show one) → drag the window back if it jumped monitors → look at the
+result and **describe it back to the agent**.
 
 Now the human does only the first: answer "no unsaved changes" in chat. Steps 2–5 are automated;
 step 6 the agent does itself.

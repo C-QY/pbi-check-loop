@@ -33,6 +33,17 @@ against Power BI Desktop with a ~910k row model.
   declaring `requires.vision: optional` since only Shot mode needs it.
 - Bilingual documentation: `README.md` (Chinese) and `README_EN.md` (English).
 
+### Fixed
+
+- Sign-in dialog dismissal matched only the Chinese title (`登录到 Power BI`). Added the
+  English `Sign in` prefix so English-locale Desktop installs are covered; further locales
+  can be appended to the same list.
+- Window restoration no longer trusts a degenerate recorded rectangle. A rect that is tiny
+  or off every screen (recorded e.g. while the window was tucked at a screen edge) is now
+  discarded — restoring it used to park the reopened window off-screen and fight the user's
+  clicks for the whole 45 s restore window. The end-of-restore verdict now compares position
+  and size instead of width only, which had reported a false `OK` for that same case.
+
 ### Notes
 
 - The watcher exits 12 s after both of its jobs finish rather than idling until the timeout.
@@ -60,4 +71,4 @@ against Power BI Desktop with a ~910k row model.
   Translytical task flow, and Copilot preview features were all ruled out. Dismissal works
   regardless of cause, since it matches on window title.
 
-[1.0.0]: https://github.com/
+[1.0.0]: https://github.com/C-QY/pbi-check-loop/releases/tag/v1.0.0

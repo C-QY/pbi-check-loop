@@ -42,9 +42,11 @@ $memFile = Join-Path $PSScriptRoot 'pbi-reload.last.json'
 $logFile = Join-Path $PSScriptRoot 'pbi-reload.dialogs.log'
 
 # 要自动关掉的弹窗标题（前缀匹配）
-#   "登录到 Power BI"      —— 2026-07-30 实测抓到的真实窗口标题
+#   "登录到 Power BI"      —— 2026-07-30 实测抓到的真实窗口标题（中文版）
+#   "Sign in"              —— 英文版登录框；前缀匹配覆盖 "Sign in to ..." 各变体（英文版未实测）
 #   "输入你的电子邮件地址"  —— 登录流程的另一步，未实测，先放着
-$DialogTitles = @('登录到 Power BI', '输入你的电子邮件地址')
+#   其他语言的 Desktop：把实测到的窗口标题加进这个列表即可
+$DialogTitles = @('登录到 Power BI', 'Sign in', '输入你的电子邮件地址')
 
 Add-Type -TypeDefinition @'
 using System; using System.Text; using System.Runtime.InteropServices;
@@ -190,10 +192,15 @@ if ($WatchPid -gt 0) {
             if ($fin) {
                 $fr = New-Object WRECT
                 [void][PbiWin]::GetWindowRect($fin.Handle, [ref]$fr)
+                # 判定跟循环内同标准：位置+尺寸都对才算 OK
+                # （只比宽度曾把落在屏幕外的窗口误报成 OK，2026-07-30 实测）
+                $finOk = ([Math]::Abs($fr.Left - $rc[0]) -lt 20) -and ([Math]::Abs($fr.Top - $rc[1]) -lt 20) -and
+                         ([Math]::Abs(($fr.Right-$fr.Left)-($rc[2]-$rc[0])) -lt 60) -and
+                         ([Math]::Abs(($fr.Bottom-$fr.Top)-($rc[3]-$rc[1])) -lt 60)
                 ("[{0}] 守窗结束 最终 L={1} T={2} {3}x{4} 目标 {5}x{6} → {7}" -f (Get-Date -Format 'HH:mm:ss'),
                     $fr.Left, $fr.Top, ($fr.Right-$fr.Left), ($fr.Bottom-$fr.Top),
                     ($rc[2]-$rc[0]), ($rc[3]-$rc[1]),
-                    $(if ([Math]::Abs(($fr.Right-$fr.Left)-($rc[2]-$rc[0])) -lt 60) { 'OK' } else { '不符' })) |
+                    $(if ($finOk) { 'OK' } else { '不符' })) |
                     Out-File $logFile -Append -Encoding utf8
             }
         }
@@ -256,6 +263,20 @@ function Get-Placement([IntPtr]$Hwnd) {
         Rect  = "$($r.Left),$($r.Top),$($r.Right),$($r.Bottom)"
         IsMax = [PbiWin]::IsZoomed($Hwnd)
     }
+}
+
+# 记下的矩形可信吗 —— 退化尺寸或不在任何屏幕内，说明窗口当时处于奇怪状态
+# （最小化会量到 -32000；被拖到屏幕边缘只露一角时实测量到过 -21281,-20853 107x19）。
+# 把这种矩形照搬给重开后的窗口，只会把它藏到屏幕外，还跟用户抢满整个守窗期。
+function Test-RectSane([string]$Rect) {
+    $p = $Rect -split ',' | ForEach-Object { [int]$_ }
+    if (($p[2] - $p[0]) -lt 200 -or ($p[3] - $p[1]) -lt 150) { return $false }
+    Add-Type -AssemblyName System.Windows.Forms
+    foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
+        $b = $s.Bounds
+        if ($p[0] -lt $b.Right -and $p[2] -gt $b.Left -and $p[1] -lt $b.Bottom -and $p[3] -gt $b.Top) { return $true }
+    }
+    return $false
 }
 
 # ---------- 1. 确定目标 .pbip ----------
@@ -356,6 +377,10 @@ Write-Host "`n重启中"
 
 # 杀之前记下窗口在哪、是不是最大化，重开后放回去
 $placement = Get-Placement -Hwnd $target.MainWindowHandle
+if ($placement -and -not (Test-RectSane $placement.Rect)) {
+    Write-Step "记下的窗口位置异常（$($placement.Rect)），放弃还原，重开用默认位置"
+    $placement = $null
+}
 if ($placement) { Write-Step "记下窗口位置 $($placement.Rect)$(if ($placement.IsMax) { ' (最大化)' })" }
 
 Write-Step "结束 Desktop（不保存）..."

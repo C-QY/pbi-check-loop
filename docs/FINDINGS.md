@@ -20,7 +20,9 @@ fixed — do not reintroduce them.
 
 1. **The sign-in dialog appears on an ~11 second delay**, not at launch. Logic that exits once
    "the main window has been responsive for 3 seconds" never catches it.
-2. **Its window title is exactly `登录到 Power BI`**, class `WindowsForms10.Window.20008.app.*`.
+2. **Its window title is exactly `登录到 Power BI`** (Chinese locale; English-locale builds title
+   it `Sign in ...`, matched by the `Sign in` prefix — not yet empirically captured on an English
+   install), class `WindowsForms10.Window.20008.app.*`.
    Match on title — it never misfires on the user's own Options dialog. Close with
    `PostMessage WM_CLOSE`, equivalent to clicking × i.e. Cancel.
 3. **The watcher must be a detached process**
@@ -42,6 +44,13 @@ fixed — do not reintroduce them.
 10. Every restart leaves a stale folder under
     `%LOCALAPPDATA%\Microsoft\Power BI Desktop\AnalysisServicesWorkspaces\`. These accumulate;
     not cleaned automatically, since deleting one still in use would be destructive.
+11. **The recorded window rect can be garbage.** Observed: `-21281,-20853` at 107×19 (window
+    tucked off a screen edge; a minimized window reports `-32000,-32000`). Replaying that rect
+    parks the reopened window off-screen, and the restore loop keeps dragging it back there —
+    fighting the user's clicks — for the whole restore window. Sanity-check at record time
+    (minimum size + must intersect some screen) and skip restoration on failure. The
+    end-of-restore verdict must compare position *and* size: a width-only check once printed
+    `OK` for a window sitting off-screen.
 
 ## Unresolved
 
