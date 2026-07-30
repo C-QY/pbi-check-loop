@@ -25,7 +25,7 @@ against Power BI Desktop with a ~910k row model.
   - Uses `PrintWindow` with `PW_RENDERFULLCONTENT`; captures non-foreground and occluded windows.
   - Never calls `SetForegroundWindow` — stealing focus would interrupt work on another monitor.
   - Falls back to `CopyFromScreen` with a warning when `PrintWindow` returns a blank bitmap.
-- **`skill/SKILL.md`** — Claude Code skill packaging, including trigger conditions, the
+- **`SKILL.md`** (repo root) — Claude Code skill packaging, including trigger conditions, the
   confirmation protocol, and ten empirically discovered pitfalls.
 - **`install.ps1`** — installs scripts and skill, verifies PowerShell syntax and UTF-8 BOM
   encoding on every installed file. Supports `-Uninstall`.

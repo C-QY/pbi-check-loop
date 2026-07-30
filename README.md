@@ -58,15 +58,15 @@ Agent 能写 `visual.json`，但看不见它渲染成什么样——对不对、
 需要 Windows + PowerShell 5.1+，装了 Power BI Desktop。
 
 ```powershell
-git clone <repo-url>
+git clone https://github.com/C-QY/pbi-check-loop.git
 cd pbi-check-loop
 .\install.ps1
 ```
 
 装两样东西：
 
-- `bin\*.ps1` → `~\.claude\tools\`
-- `skill\SKILL.md` → `~\.claude\skills\pbi-check-loop\`
+- `scripts\*.ps1` → `~\.claude\tools\`
+- `SKILL.md`（仓库根目录）→ `~\.claude\skills\pbi-check-loop\`
 
 装完自检语法和 UTF-8 BOM。重启 Claude Code 后 skill 生效，agent 会在合适时机自动用它。
 
@@ -104,8 +104,8 @@ Desktop 标题栏不带修改标记，枚举窗口也拿不到脏状态——**�
 
 ## 一句更诚实的
 
-这两个脚本加起来 400 多行 PowerShell，**本身没有技术含量**。真正花时间的是那些实证——
+这两个脚本加起来六百多行 PowerShell，**本身没有技术含量**。真正花时间的是那些实证——
 登录弹窗延迟 11 秒才出现、守候进程必须独立否则随会话死、`IsZoomed` 返回 True 时窗口可能
 根本没撑开……**任何人重做一遍都会踩同样的坑**。
 
-价值在 [`skill/SKILL.md`](skill/SKILL.md) 末尾那 10 条踩坑记录，不在代码。
+价值在 [`docs/FINDINGS.md`](docs/FINDINGS.md) 那 11 条实证记录，不在代码。

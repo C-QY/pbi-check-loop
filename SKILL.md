@@ -198,7 +198,7 @@ Watcher log: `~\.claude\tools\pbi-reload.dialogs.log`. Read it only when diagnos
 
 ## Maintaining these scripts
 
-Ten empirically discovered pitfalls (dialog timing, detached watcher, `IsZoomed` lying about
+Eleven empirically discovered pitfalls (dialog timing, detached watcher, `IsZoomed` lying about
 maximized state, verifying too early, BOM requirements) and the unresolved sign-in-dialog root
 cause live in [`docs/FINDINGS.md`](docs/FINDINGS.md). **Read it only if you are modifying the
 scripts** — calling them does not require it.

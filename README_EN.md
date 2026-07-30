@@ -70,7 +70,7 @@ step 6 the agent does itself.
 Requires Windows, PowerShell 5.1+, and Power BI Desktop.
 
 ```powershell
-git clone https://github.com/<user>/pbi-check-loop.git
+git clone https://github.com/C-QY/pbi-check-loop.git
 cd pbi-check-loop
 .\install.ps1
 ```
@@ -79,8 +79,8 @@ This installs two things:
 
 | From | To |
 |---|---|
-| `bin\*.ps1` | `~\.claude\tools\` |
-| `skill\SKILL.md` | `~\.claude\skills\pbi-check-loop\` |
+| `scripts\*.ps1` | `~\.claude\tools\` |
+| `SKILL.md` (repo root) | `~\.claude\skills\pbi-check-loop\` |
 
 The installer verifies PowerShell syntax and UTF-8 BOM encoding on every installed script.
 Restart Claude Code afterwards so the skill is picked up.
@@ -123,12 +123,12 @@ Nothing about that is specific to Power BI. It holds for Figma, Unity, CAD, or a
 
 ## An honest note
 
-These scripts total ~400 lines of PowerShell and contain **no clever engineering**. What actually
+These scripts total ~660 lines of PowerShell and contain **no clever engineering**. What actually
 took time was the empirical findings — the login dialog appears on an ~11 second delay, the watcher
 must be a detached process or it dies with the calling session, `IsZoomed` can return `True` while
 the window was never actually expanded. **Anyone rebuilding this hits the same walls.**
 
-The value is in the ten findings at the end of [`skill/SKILL.md`](skill/SKILL.md), not in the code.
+The value is in the eleven findings in [`docs/FINDINGS.md`](docs/FINDINGS.md), not in the code.
 
 ## License
 
