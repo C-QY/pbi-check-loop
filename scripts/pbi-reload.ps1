@@ -120,6 +120,11 @@ function Get-MainWindow([int]$TargetPid) {
 if ($WatchPid -gt 0) {
     $deadline = (Get-Date).AddSeconds($DismissTimeout)
     $closed = 0
+    # 活干完就收工，别空转到超时。设计原则「轻量」：会不会增加额外负担？会就不做。
+    # 实测时间线：第 3 秒还原窗口、第 11 秒关掉弹窗 —— 剩下 109 秒纯粹空转。
+    # 关掉弹窗后再多守 $GraceSec 秒，防它二次弹出（复制 visual 时出现过连弹）。
+    $GraceSec  = 12
+    $doneAfter = $null
     ("[{0}] 守候开始 PID={1} 超时={2}s" -f (Get-Date -Format 'HH:mm:ss'), $WatchPid, $DismissTimeout) |
         Out-File $logFile -Append -Encoding utf8
 
@@ -202,10 +207,19 @@ if ($WatchPid -gt 0) {
             Start-Sleep -Milliseconds 600
         }
         }
+
+        # 收工判定：窗口已就位 + 弹窗已关过（或本来就不管弹窗）
+        #   → 再宽限 $GraceSec 秒就退出，不再占着一个后台进程。
+        # 弹窗若始终没出现，则自然回退到 $DismissTimeout 超时（安全兜底）。
+        $jobDone = $restored -and ($closed -gt 0 -or $NoDismiss)
+        if ($jobDone -and -not $doneAfter) { $doneAfter = (Get-Date).AddSeconds($GraceSec) }
+        if ($doneAfter -and (Get-Date) -ge $doneAfter) { break }
+
         Start-Sleep -Milliseconds 400
     }
 
-    ("[{0}] 守候结束，共关闭 {1} 个`r`n" -f (Get-Date -Format 'HH:mm:ss'), $closed) |
+    $how = if ($doneAfter) { "提前收工" } else { "等到超时" }
+    ("[{0}] 守候结束（{1}），共关闭 {2} 个`r`n" -f (Get-Date -Format 'HH:mm:ss'), $how, $closed) |
         Out-File $logFile -Append -Encoding utf8
     exit
 }
