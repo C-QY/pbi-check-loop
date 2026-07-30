@@ -1,22 +1,16 @@
 ---
 name: pbi-check-loop
 description: >-
-  Close the feedback loop that breaks when an AI develops Power BI reports.
-  Three modes — Check: report whether Desktop is stale, i.e. whether files on disk are newer
-  than the running instance, plus edition, PID and workspace. Reload: restart Desktop so it
-  re-reads changed TMDL/PBIR, auto-dismissing the sign-in dialog and restoring window placement.
-  Shot: capture the Desktop window to PNG so the agent can see what actually rendered —
-  or with -Text, read it through UI Automation as plain text (dialog and error text, visual
-  titles, column headers, cell values) so a model without vision can work too.
-  Trigger — check: "Desktop 是最新的吗", "需要重载吗", "看下 pbi 状态", "is Desktop stale",
-  "check pbi state". Also run this automatically before any reload.
-  Trigger — reload: after editing TMDL/measures/PBIR when the effect must be seen in Desktop,
-  "重开一下 Desktop", "让 Desktop 重新读盘", "重载一下", "reload pbi", "restart Power BI Desktop".
-  Trigger — shot: "看看现在报表", "截个图", "show me the report", or whenever the user reports
-  an error, a rendering problem, or asks what something looks like in Desktop.
-  Match longest trigger first — "重载一下" before "重载".
-  Output language follows the user's: Chinese in, Chinese out.
-  Windows + PowerShell only.
+  Closes the feedback loop that breaks when an AI develops Power BI reports, so the model iterates
+  by itself instead of a human repeatedly closing, reopening and eye-checking Desktop after every
+  edit. Checks whether files on disk are newer than the running instance. Reloads Desktop so it
+  re-reads changed TMDL and PBIR, auto-dismissing the sign-in dialog and restoring window placement.
+  Captures the window as a PNG, or with -Text reads it through UI Automation as plain text so a
+  model without vision works too. Use when editing TMDL, measures or PBIR; when the user says
+  “重开一下 Desktop”, “让 Desktop 重新读盘”, “重载一下”, “reload pbi”; on “Desktop 是最新的吗”, “需要重载吗”, “check pbi state”;
+  on “看看现在报表”, “截个图”, “show me the report”; or whenever the user reports an error or rendering problem.
+  Runs Check before any Reload. Windows and PowerShell only.
+
 version: 1.0.0
 license: MIT
 allowed_tools: [PowerShell, Read]
@@ -125,7 +119,7 @@ truncated to `PUR_DAILY_STOCK_DE…` comes back whole as `PUR_DAILY_STOCK_DETAIL
 be inventing content. Use `-Text`, or hand the PNG path to the user and ask what they see.
 
 🔴 **`-Text` output is business data** — real material codes, company names, amounts. Handle it
-exactly like a screenshot: never publish, never commit, quote only what the question needs.
+exactly like a capture: never publish, never commit, quote only what the question needs.
 
 ### Step 5 — Report back
 
@@ -170,7 +164,7 @@ load each time and rarely finds a problem the third pass will.
 `pbi-shot.ps1` ~130. This document states everything needed to call them. Read the source only
 to modify it.
 
-**Treat captured screenshots as confidential.** A Power BI window shows live business data —
+**Treat captures as confidential.** A Power BI window shows live business data —
 revenue, supplier names, part numbers, customers. Therefore:
 
 - Write captures to a temporary/scratch path, never into the user's project or a git repo
