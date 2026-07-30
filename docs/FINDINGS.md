@@ -20,9 +20,9 @@ fixed — do not reintroduce them.
 
 1. **The sign-in dialog appears on an ~11 second delay**, not at launch. Logic that exits once
    "the main window has been responsive for 3 seconds" never catches it.
-2. **Its window title is exactly `登录到 Power BI`** (Chinese locale; English-locale builds title
-   it `Sign in ...`, matched by the `Sign in` prefix — not yet empirically captured on an English
-   install), class `WindowsForms10.Window.20008.app.*`.
+2. **Its window title is exactly `登录到 Power BI`** (Chinese locale) / **`Sign in to Power BI`**
+   (English locale — empirically captured and auto-dismissed twice on 2026-07-30; matched by the
+   `Sign in` prefix), class `WindowsForms10.Window.20008.app.*`.
    Match on title — it never misfires on the user's own Options dialog. Close with
    `PostMessage WM_CLOSE`, equivalent to clicking × i.e. Cancel.
 3. **The watcher must be a detached process**

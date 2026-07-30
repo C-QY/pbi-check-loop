@@ -42,8 +42,8 @@ $memFile = Join-Path $PSScriptRoot 'pbi-reload.last.json'
 $logFile = Join-Path $PSScriptRoot 'pbi-reload.dialogs.log'
 
 # 要自动关掉的弹窗标题（前缀匹配）
-#   "登录到 Power BI"      —— 2026-07-30 实测抓到的真实窗口标题（中文版）
-#   "Sign in"              —— 英文版登录框；前缀匹配覆盖 "Sign in to ..." 各变体（英文版未实测）
+#   "登录到 Power BI"      —— 中文版登录框，2026-07-30 实测抓到
+#   "Sign in"              —— 英文版登录框 "Sign in to Power BI"，2026-07-30 英文版实测两次抓到
 #   "输入你的电子邮件地址"  —— 登录流程的另一步，未实测，先放着
 #   其他语言的 Desktop：把实测到的窗口标题加进这个列表即可
 $DialogTitles = @('登录到 Power BI', 'Sign in', '输入你的电子邮件地址')
@@ -138,8 +138,9 @@ if ($WatchPid -gt 0) {
     $restoreDeadline = (Get-Date).AddSeconds($RestoreWindowSec)
     $loggedOk = $false
 
+    $processGone = $false
     while ((Get-Date) -lt $deadline) {
-        if (-not (Get-Process -Id $WatchPid -ErrorAction SilentlyContinue)) { break }
+        if (-not (Get-Process -Id $WatchPid -ErrorAction SilentlyContinue)) { $processGone = $true; break }
 
         # 加载期间 Desktop 会自己重设窗口状态，把我们的还原盖掉，
         # 所以要「做完再验、没成就重来」，不能一次性设完就当成功。
@@ -225,7 +226,8 @@ if ($WatchPid -gt 0) {
         Start-Sleep -Milliseconds 400
     }
 
-    $how = if ($doneAfter) { "提前收工" } else { "等到超时" }
+    # 三种收工方式分开记：提前收工=活干完；目标进程已退出=用户自己关了 Desktop；等到超时=兜底
+    $how = if ($doneAfter) { '提前收工' } elseif ($processGone) { '目标进程已退出' } else { '等到超时' }
     ("[{0}] 守候结束（{1}），共关闭 {2} 个`r`n" -f (Get-Date -Format 'HH:mm:ss'), $how, $closed) |
         Out-File $logFile -Append -Encoding utf8
     exit
