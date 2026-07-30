@@ -152,7 +152,7 @@ exposes no dirty state:
 ⚠️ **Do not assume "the user never edits in Desktop."** That assumption was empirically
 falsified — polishing the report layer is the user's job by design.
 
-**Compare against something.** A screenshot on its own is not a verdict. If a prototype or
+**Compare against something.** A capture on its own is not a verdict. If a prototype or
 mockup exists, compare to it and name the differences. If none exists, report what you observe
 and let the user judge — do not invent a standard.
 
