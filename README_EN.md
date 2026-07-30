@@ -112,9 +112,13 @@ Desktop's title bar carries no modified marker and window enumeration exposes no
 **Only a human knows.** So the confirmation cannot be skipped — and it should not be a GUI popup
 either (that interrupts); it belongs in the conversation.
 
-> **Several agents on one machine:** always pass `-Path` explicitly (plus `-Id` when several
-> instances run). The remembered path in `pbi-reload.last.json` is shared machine-wide —
-> omit it and you may reload another agent's project.
+> **Several agents on one machine** (each on its own report): always pass `-Path` — the script
+> matches the project name against window titles and finds *your* instance, never touching
+> another agent's Desktop; `-Id` is only the fallback when no title matches.
+> `pbi-reload.last.json` is shared machine-wide, so omitting `-Path` may reuse what another
+> agent remembered. **Several agents on ONE report** is a different matter — the conflict is at
+> the file layer (two writers on the same TMDL/PBIR), which this tool cannot serialize.
+> Don't split work that way.
 
 ## The generalizable part
 

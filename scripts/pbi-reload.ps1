@@ -307,16 +307,32 @@ if ($procs.Count -eq 0) {
 }
 
 if ($procs.Count -gt 1 -and -not $Id) {
-    Write-Host "发现多个 Desktop 实例，请用 -Id 指定要重启哪个：`n"
-    foreach ($p in $procs) {
-        $ver = if ($p.Path -like '*Desktop RS*') { 'RS版' } else { '常规版' }
-        Write-Host ("  -Id {0}   [{1}]  {2}" -f $p.Id, $ver, $p.MainWindowTitle)
+    # 多 agent 共用一机：-Path 就是身份。按项目名匹配窗口标题，命中唯一就不再要求 -Id
+    if ($Path) {
+        $stem = [WildcardPattern]::Escape([IO.Path]::GetFileNameWithoutExtension($Path))
+        $byTitle = @($procs | Where-Object { $_.MainWindowTitle -like "$stem - *" })
+        if ($byTitle.Count -eq 1) { $procs = $byTitle }
     }
-    return
+    if ($procs.Count -gt 1) {
+        Write-Host "发现多个 Desktop 实例，请用 -Id 指定要重启哪个：`n"
+        foreach ($p in $procs) {
+            $ver = if ($p.Path -like '*Desktop RS*') { 'RS版' } else { '常规版' }
+            Write-Host ("  -Id {0}   [{1}]  {2}" -f $p.Id, $ver, $p.MainWindowTitle)
+        }
+        return
+    }
 }
 
 $target = if ($Id) { $procs | Where-Object { $_.Id -eq $Id } } else { $procs[0] }
 if (-not $target) { throw "找不到 PID $Id 的 Desktop 进程。" }
+
+# 单实例但与 -Path 的项目不符 —— 多半是别的 agent/会话的 Desktop，动手前先喊一声
+if ($Path -and $target.MainWindowTitle) {
+    $stem = [WildcardPattern]::Escape([IO.Path]::GetFileNameWithoutExtension($Path))
+    if ($target.MainWindowTitle -notlike "$stem - *") {
+        Write-Host "⚠ 运行中的实例是「$($target.MainWindowTitle)」，与 -Path 的项目不一致 —— 将结束它并打开 $(Split-Path $Path -Leaf)" -ForegroundColor Yellow
+    }
+}
 
 $exePath = $target.Path
 $edition = if ($exePath -like '*Desktop RS*') { 'RS版' } else { '常规版' }

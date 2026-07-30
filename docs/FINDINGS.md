@@ -11,8 +11,10 @@ focus interrupts them. `PrintWindow` does not need it.
 
 🔴 **Shared state on multi-agent machines.** `pbi-reload.last.json` is one file per machine —
 an agent passing `-Path` for its own project overwrites what another agent remembered. Callers
-must pass `-Path` (and `-Id` when several instances run). Candidate improvement: infer the
-instance from `-Path` via a window-title match so `-Id` becomes unnecessary.
+must pass `-Path`; the instance is then identified by matching the project name against window
+titles (implemented 2026-07-30), with `-Id` as fallback. Several agents on ONE report is a
+file-layer conflict (two writers on the same TMDL/PBIR) that this tool cannot serialize —
+don't do it.
 
 
 Notes for anyone modifying `scripts/*.ps1`. Not needed to *call* the tools — kept out of

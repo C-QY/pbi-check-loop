@@ -181,9 +181,11 @@ revenue, supplier names, part numbers, customers. Therefore:
 **Be proactive.** After editing TMDL, offer the reload yourself; do not wait to be asked.
 
 **Several agents, one machine.** `pbi-reload.last.json` (the remembered path) is shared across
-every user of the tool. When multiple agents develop different reports on one machine, always
-pass `-Path` explicitly — and `-Id` when several Desktop instances run — so you never kill
-another agent's instance.
+every user of the tool, so always pass `-Path` explicitly: your instance is then identified by
+matching the project name against window titles, and you cannot kill another agent's instance.
+`-Id` remains the fallback when no title matches. **Several agents on ONE report is a different
+problem** — the conflict lives at the file layer (two writers on the same TMDL/PBIR), which this
+tool cannot serialize. Don't do it.
 
 **Match the user's language.** Chinese in, Chinese out.
 

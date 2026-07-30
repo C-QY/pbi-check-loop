@@ -19,6 +19,9 @@ against Power BI Desktop with a ~910k row model.
   - Restores the window to its previous rectangle and maximized state, on whichever monitor
     it was on. Verified on both an external 2560×1440 display and a 1493×933 laptop panel.
   - Reports whether files on disk are newer than the running instance.
+  - With `-Path` given, the target instance is identified by matching the project name against
+    window titles — safe on multi-agent machines without a manual `-Id`. Warns when the single
+    running instance's project does not match `-Path` (likely another agent's Desktop).
   - Refuses to act without `-Yes`; confirmation is expected to happen in conversation,
     never via a GUI popup.
 - **`pbi-shot.ps1`** — capture the Power BI Desktop window to PNG so an agent can read it.
