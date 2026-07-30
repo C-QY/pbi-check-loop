@@ -112,7 +112,7 @@ automatically alongside the image** — an error read as text beats reading it o
 | **Layout, colours, spacing — does it match the mockup?** | **image + vision** |
 
 The boundary is **semantics vs. presentation**: text gives what the report *says*, only an image
-gives how it *looks*. Text is sometimes the more precise of the two — a name the screenshot
+gives how it *looks*. Text is sometimes the more precise of the two — a name the capture
 truncated to `PUR_DAILY_STOCK_DE…` comes back whole as `PUR_DAILY_STOCK_DETAIL`.
 
 🔴 **If you cannot read images, never call image mode and then describe the report** — you would
@@ -173,7 +173,7 @@ revenue, supplier names, part numbers, customers. Therefore:
 - Error dialogs may expose connection strings, server names, or credentials —
   never echo those verbatim and never commit them
 
-**Do NOT expose secrets, tokens, or passwords** found in config files, logs, or screenshots.
+**Do NOT expose secrets, tokens, or passwords** found in config files, logs, or captures.
 
 **Be proactive.** After editing TMDL, offer the reload yourself; do not wait to be asked.
 
