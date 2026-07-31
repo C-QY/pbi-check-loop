@@ -168,12 +168,26 @@ from an image. Supplying a mockup converts an unanswerable question into an answ
 So the workflow becomes: **design the prototype with a human, then let the agent converge on it
 unattended.** The human sets the target; the agent runs the laps.
 
-Two rules keep this honest, both enforced in `SKILL.md`:
+`SKILL.md` carries this as an explicit checklist the agent works through, so the loop is a
+procedure rather than a suggestion:
 
-- **No oracle, no verdict.** With no prototype, the agent reports what it observes and lets you
-  judge. It must never invent a standard and then declare success against it
-- **Stop after two failed rounds.** If two edit → reload → shot cycles have not converged, it
-  stops and tells you what it sees. Each round costs a full model load, and a third rarely finds
+```
+- [ ] 0. Establish the oracle — prototype, or a written spec of "correct"
+- [ ] 1. Confirm no unsaved changes (once, up front — not every round)
+- [ ] 2. Edit the PBIR/TMDL on disk
+- [ ] 3. Reload
+- [ ] 4. Wait for the title to settle, then Shot
+- [ ] 5. Compare against the oracle; list concrete differences
+- [ ] 6. Differences remain and rounds < 2 → back to step 2. Otherwise stop and report.
+```
+
+Three rules keep it honest:
+
+- **No oracle, no loop.** With no prototype the agent does one round, shows you the result, and
+  lets you judge. It must never invent a standard and then declare success against it
+- **Ask about unsaved changes once, not every round.** Re-confirming each iteration would defeat
+  the point of running unattended — but if you touch Desktop mid-run, the loop stops and re-asks
+- **Stop after two failed rounds.** Each round costs a full model load, and a third rarely finds
   what the first two missed
 
 ---

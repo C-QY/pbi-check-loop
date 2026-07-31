@@ -94,11 +94,18 @@ from `Untitled - Power BI Desktop` to the project name.
 **4c. Class A — read, close, fix, reopen.** In that order, and do not skip the close.
 
 ```powershell
-& "$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Text          # 1. read the dialog verbatim
-Stop-Process -Name PBIDesktop -Force                            # 2. close the broken instance
-#                                                                 3. fix the file on disk
-& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Path "..." -Yes   # 4. reopen
+# 1. read the dialog verbatim — note the PID it reports
+& "$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Text
+
+# 2. close ONLY that instance, by the PID from step 1
+Stop-Process -Id <pid> -Force
+
+# 3. fix the file on disk, then reopen
+& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Path "...\project.pbip" -Yes
 ```
+
+🔴 **Never `Stop-Process -Name PBIDesktop`** — that kills *every* Desktop on the machine,
+including another agent's or the user's own unsaved work. Always target the single PID.
 
 **Never leave a broken instance running while editing.** It holds the project, its `msmdsrv`
 child lingers, and the next reload has to fight both. Read the error, close it, then fix.
@@ -164,6 +171,42 @@ Pick the channel by the question:
 
 Text gives what the report *says*; only an image gives how it *looks*. Text is sometimes more
 precise — a name truncated to `SALES_DETAIL_BY_RE…` in the capture comes back whole in text.
+
+## Running the loop unattended
+
+The steps above are single moves. This is how they compose into an iteration loop that does not
+stop for a human every round — the reason this skill exists.
+
+**Use it when** a prototype, mockup or explicit spec exists and the task is to make the report
+match it. **Do not use it** without one: see the stop condition below.
+
+```
+Task Progress:
+- [ ] 0. Establish the oracle — the prototype, or a written spec of what "correct" means
+- [ ] 1. Confirm no unsaved changes in Desktop (ask once, up front — covers the whole run)
+- [ ] 2. Edit the PBIR/TMDL on disk
+- [ ] 3. Reload
+- [ ] 4. Wait for the title to settle, then Shot
+- [ ] 5. Compare against the oracle; list concrete differences
+- [ ] 6. Differences remain and rounds < 2 → back to step 2. Otherwise stop and report.
+```
+
+**Step 0 is what makes the rest legal.** Without an oracle there is nothing to compare against,
+and an agent that invents its own standard will declare success on anything. If no prototype
+exists, do not run this loop — do one round, show the user, and let them judge.
+
+**Ask about unsaved changes once, at step 1, not every round.** Once the loop owns the file the
+user is not editing in Desktop; re-asking every iteration destroys the point of running
+unattended. If the user does touch Desktop mid-run, stop the loop and re-confirm.
+
+**Step 5 is the part that cannot be faked.** State the differences concretely — "the KPI row is
+at y=120 but the mockup has it at y=80", not "close enough". If you cannot see the image, you
+cannot run this loop: use `-Text` for what the report *says*, and hand the layout question to
+the user.
+
+**Stop after two full rounds** that have not converged. Report what you changed, what you see
+now, and what still differs. A third round burns another model load and rarely finds what the
+first two missed.
 
 **Step 6 — Report back**
 
