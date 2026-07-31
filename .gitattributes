@@ -4,5 +4,10 @@
 # PowerShell scripts must keep CRLF — they are consumed by Windows PowerShell 5.1.
 *.ps1 text eol=crlf
 
+# get.ps1 is the exception: it is fetched with Invoke-RestMethod and piped into iex,
+# which passes any BOM through as content and then fails to parse the first token.
+# Store it byte-for-byte so nothing can prepend one.
+get.ps1 -text
+
 # Mark generated/vendored paths so GitHub language stats stay meaningful.
 *.md linguist-documentation

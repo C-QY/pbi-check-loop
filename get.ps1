@@ -1,5 +1,3 @@
-$ErrorActionPreference = 'Stop'
-
 # pbi-check-loop bootstrap installer
 # Usage: irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 #
@@ -7,8 +5,11 @@ $ErrorActionPreference = 'Stop'
 # with [CmdletBinding()] / param() is only valid as a FILE. So install.ps1 cannot be
 # piped into iex directly - it is downloaded to a temp file and invoked from there.
 #
-# The first line is deliberately a statement, not a comment: if a BOM survives the
-# download, iex would otherwise parse U+FEFF plus '#' as a command name and fail.
+# This file must be stored WITHOUT a BOM. Invoke-RestMethod passes a BOM through as
+# content, and iex would then parse U+FEFF plus the first token as one broken name.
+# .gitattributes excludes it from the *.ps1 rules for exactly that reason.
+
+$ErrorActionPreference = 'Stop'
 
 $repo = 'https://github.com/C-QY/pbi-check-loop'
 $tmp  = Join-Path $env:TEMP ('pbi-check-loop-' + [guid]::NewGuid().ToString('N').Substring(0,8))
