@@ -1,11 +1,14 @@
+$ErrorActionPreference = 'Stop'
+
 # pbi-check-loop bootstrap installer
 # Usage: irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 #
 # This file exists because `iex` evaluates its input as an EXPRESSION, and a script
 # with [CmdletBinding()] / param() is only valid as a FILE. So install.ps1 cannot be
 # piped into iex directly - it is downloaded to a temp file and invoked from there.
-
-$ErrorActionPreference = 'Stop'
+#
+# The first line is deliberately a statement, not a comment: if a BOM survives the
+# download, iex would otherwise parse U+FEFF plus '#' as a command name and fail.
 
 $repo = 'https://github.com/C-QY/pbi-check-loop'
 $tmp  = Join-Path $env:TEMP ('pbi-check-loop-' + [guid]::NewGuid().ToString('N').Substring(0,8))
