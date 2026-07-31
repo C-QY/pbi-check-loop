@@ -1,4 +1,4 @@
-﻿# pbi-check-loop bootstrap installer
+# pbi-check-loop bootstrap installer
 # Usage: irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 #
 # This file exists because `iex` evaluates its input as an EXPRESSION, and a script
