@@ -34,7 +34,9 @@ against Power BI Desktop with a ~910k row model.
   encoding on every installed file. Supports `-Uninstall`.
 - **`agents/openai.yaml`** — manifest so OpenAI-compatible agent runtimes can register the skill,
   declaring `requires.vision: optional` since only Shot mode needs it.
-- Bilingual documentation: `README.md` (Chinese) and `README_EN.md` (English).
+- Bilingual documentation: `README.md` (English) and `README.zh-CN.md` (Chinese).
+- All script output is English; the Chinese strings that remain are observed Windows dialog
+  titles used for matching, not UI text.
 
 ### Fixed
 

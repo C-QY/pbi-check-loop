@@ -1,26 +1,28 @@
 ﻿<#
 .SYNOPSIS
-    重启 Power BI Desktop，让它重新读取磁盘上已被修改的 pbip / TMDL，
-    并自动关掉启动时弹出的登录框。
+    Restart Power BI Desktop so it re-reads a .pbip / TMDL changed on disk,
+    and dismiss the sign-in dialog that appears on launch.
 
 .DESCRIPTION
-    直接结束进程（= 不保存、不弹对话框），清理残留的 msmdsrv，
-    再用「原来那个版本」的 PBIDesktop.exe 重新打开同一个 .pbip。
+    Terminates the process (no save, no dialog), cleans up the orphaned msmdsrv,
+    then reopens the same .pbip with the SAME edition of PBIDesktop.exe.
 
-    ⚠ 会丢弃 Desktop 里所有未保存的改动。这正是本工具的目的：
-      磁盘上有改过的 TMDL，Desktop 内存里是旧模型，保存反而会覆盖。
+    WARNING: every unsaved change in Desktop is discarded. That is the point of
+      this tool: the TMDL on disk is newer, Desktop holds a stale model in memory,
+      and saving would overwrite the disk.
 
 .PARAMETER Path
-    .pbip 文件路径。首次需指定，之后会记住；再次运行可省略。
+    Path to the .pbip. Required on first run, remembered afterwards.
 
 .PARAMETER ListOnly
-    只报告当前状态，不做任何操作。
+    Report current state only. Changes nothing.
 
 .PARAMETER NoDismiss
-    不自动关闭登录弹窗。
+    Do not auto-dismiss the sign-in dialog.
 
 .EXAMPLE
-    .\pbi-reload.ps1 -Path "D:\repo\我的项目.pbip"
+    .\pbi-reload.ps1 -Path "D:
+epo\my-project.pbip"
     .\pbi-reload.ps1
     .\pbi-reload.ps1 -ListOnly
 #>
@@ -30,22 +32,23 @@ param(
     [int]$Id,
     [switch]$ListOnly,
     [switch]$NoDismiss,
-    [switch]$Yes,               # 确认「Desktop 里没有未保存的改动」。不给就只提示、不动手
+    [switch]$Yes,               # Asserts 'no unsaved changes in Desktop'. Without it the script only warns
     [int]$DismissTimeout = 120,
-    [int]$WatchPid = 0,         # 内部用：以「守候模式」运行，勿手动指定
-    [string]$RestoreRect = '',  # 内部用："L,T,R,B"，重开后把窗口放回原位
-    [switch]$RestoreMax         # 内部用：原来是最大化的
+    [int]$WatchPid = 0,         # Internal: run as the detached watcher. Do not pass manually
+    [string]$RestoreRect = '',  # Internal: "L,T,R,B" - put the window back after reopening
+    [switch]$RestoreMax         # Internal: the window was maximized
 )
 
 $ErrorActionPreference = 'Stop'
 $memFile = Join-Path $PSScriptRoot 'pbi-reload.last.json'
 $logFile = Join-Path $PSScriptRoot 'pbi-reload.dialogs.log'
 
-# 要自动关掉的弹窗标题（前缀匹配）
-#   "登录到 Power BI"      —— 中文版登录框，2026-07-30 实测抓到
-#   "Sign in"              —— 英文版登录框 "Sign in to Power BI"，2026-07-30 英文版实测两次抓到
-#   "输入你的电子邮件地址"  —— 登录流程的另一步，未实测，先放着
-#   其他语言的 Desktop：把实测到的窗口标题加进这个列表即可
+# Sign-in dialog titles to dismiss (prefix match).
+#   These are WINDOW TITLES observed in the wild, not UI strings - do not translate them.
+#   "Sign in"              - English Desktop, title "Sign in to Power BI" (verified twice)
+#   "登录到 Power BI"      - Chinese Desktop (verified)
+#   "输入你的电子邮件地址"  - a later step of the sign-in flow, unverified
+#   Other locales: append the title you actually observe to this list.
 $DialogTitles = @('登录到 Power BI', 'Sign in', '输入你的电子邮件地址')
 
 Add-Type -TypeDefinition @'
@@ -66,7 +69,7 @@ public class PbiWin {
 public struct WRECT { public int Left, Top, Right, Bottom; }
 '@ -ErrorAction SilentlyContinue
 
-# 找出属于指定进程、且标题命中 $Titles 的可见窗口
+# Visible windows owned by the given process whose title matches one of $Titles
 function Get-MatchingWindows([int]$TargetPid, [string[]]$Titles) {
     $hits = New-Object System.Collections.ArrayList
     $cb = [PbiWin+EnumWindowsProc]{
@@ -89,7 +92,8 @@ function Get-MatchingWindows([int]$TargetPid, [string[]]$Titles) {
     return $hits
 }
 
-# 主窗口：标题以 "- Power BI Desktop" 结尾（加载中是「无标题 - 」，加载完变项目名）
+# Main window: title ends with "- Power BI Desktop". While loading it reads
+# "Untitled - ..." (localized); once loaded it becomes the project name.
 function Get-MainWindow([int]$TargetPid) {
     $hit = $null
     $cb = [PbiWin+EnumWindowsProc]{
@@ -109,31 +113,36 @@ function Get-MainWindow([int]$TargetPid) {
 }
 
 # ============================================================
-#  守候模式：作为独立进程运行，盯着登录弹窗并关掉
+#  Watcher mode: runs as a detached process, waiting for the sign-in dialog.
 #
-#  为什么按标题精确匹配，而不是猜「哪个是模态框」：
-#    标题是实测抓到的确定值，绝不会误伤你自己打开的「选项」等对话框。
+#  Why match on the exact title instead of guessing "which one is modal":
+#    the titles are values observed in the wild, so this never closes the
+#    Options dialog the user opened themselves.
 #
-#  为什么要独立进程而不是 Start-Job：
-#    弹窗是延迟出现的，得守两分钟；后台 job 会随着调用方会话结束而死。
+#  Why a detached process rather than Start-Job:
+#    the dialog is delayed, so the watch lasts minutes; a background job dies
+#    with the calling session.
 #
-#  关法是 PostMessage WM_CLOSE，等同于点右上角 ×（＝取消），不会误触确定。
+#  It closes with PostMessage WM_CLOSE - the same as clicking the X (= Cancel),
+#  so it can never hit OK by accident.
 # ============================================================
 if ($WatchPid -gt 0) {
     $deadline = (Get-Date).AddSeconds($DismissTimeout)
     $closed = 0
-    # 活干完就收工，别空转到超时。设计原则「轻量」：会不会增加额外负担？会就不做。
-    # 实测时间线：第 3 秒还原窗口、第 11 秒关掉弹窗 —— 剩下 109 秒纯粹空转。
-    # 关掉弹窗后再多守 $GraceSec 秒，防它二次弹出（复制 visual 时出现过连弹）。
+    # Exit once the work is done instead of idling until the timeout.
+    # Measured: window restored at 3 s, dialog dismissed at 11 s, then 109 s of nothing.
+    # Stay $GraceSec seconds past the dismissal in case the dialog pops a second time.
     $GraceSec  = 12
     $doneAfter = $null
-    ("[{0}] 守候开始 PID={1} 超时={2}s" -f (Get-Date -Format 'HH:mm:ss'), $WatchPid, $DismissTimeout) |
+    ("[{0}] watch start pid={1} timeout={2}s" -f (Get-Date -Format 'HH:mm:ss'), $WatchPid, $DismissTimeout) |
         Out-File $logFile -Append -Encoding utf8
 
-    # 主窗口一出现就把它放回原位，免得重启后蹦回主屏抢走外接大屏
+    # Put the window back as soon as it appears, so the restart does not
+    # bounce it onto the primary monitor and take over the external display
     $restored = -not $RestoreRect
     $rc = if ($RestoreRect) { $RestoreRect -split ',' | ForEach-Object { [int]$_ } } else { $null }
-    # 只在开头这段时间里跟 Desktop 抢窗口状态；之后就撒手，免得用户自己拖窗口被我们拽回去
+    # Only fight Desktop for the window state during this opening window; after that
+    # let go, so the user dragging their own window is not yanked back
     $RestoreWindowSec = 45
     $restoreDeadline = (Get-Date).AddSeconds($RestoreWindowSec)
     $loggedOk = $false
@@ -142,36 +151,38 @@ if ($WatchPid -gt 0) {
     while ((Get-Date) -lt $deadline) {
         if (-not (Get-Process -Id $WatchPid -ErrorAction SilentlyContinue)) { $processGone = $true; break }
 
-        # 加载期间 Desktop 会自己重设窗口状态，把我们的还原盖掉，
-        # 所以要「做完再验、没成就重来」，不能一次性设完就当成功。
+        # Desktop resets its own window state while loading, clobbering the restore,
+        # so this must be apply-verify-retry rather than a single fire-and-forget call.
         if (-not $restored -and (Get-Date) -lt $restoreDeadline) {
             $main = Get-MainWindow -TargetPid $WatchPid
             if ($main) {
                 $r = New-Object WRECT
                 [void][PbiWin]::GetWindowRect($main.Handle, [ref]$r)
 
-                # 🔴 判据一律是「最终矩形 ≈ 原矩形」，不看 IsZoomed —— 实测 SW_MAXIMIZE 会把
-                #    状态标志置上但窗口没被撑开（停在临时的 800×600），只查标志会得到假成功。
+                # The test is always "final rect ~= original rect", never IsZoomed:
+                # SW_MAXIMIZE sets the flag while the window is still at a temporary
+                # 800x600, so checking the flag alone yields a false success.
                 $tw = $rc[2] - $rc[0]; $th = $rc[3] - $rc[1]
                 $cw = $r.Right - $r.Left; $ch = $r.Bottom - $r.Top
                 $posOk  = ([Math]::Abs($r.Left - $rc[0]) -lt 20) -and ([Math]::Abs($r.Top - $rc[1]) -lt 20)
                 $sizeOk = ([Math]::Abs($cw - $tw) -lt 60) -and ([Math]::Abs($ch - $th) -lt 60)
 
-                # 🔴 达标了也不收工 —— Desktop 加载完还会自己再调一次窗口，
-                #    早早判定成功就会把「过程中的快照」当最终结果（实测踩过：
-                #    启动后 3 秒量到 798×600，等加载完其实是 1508×900）。
-                #    所以持续盯到 $restoreDeadline，中途漂了就再摆正。
+                # Do not stop on the first success: Desktop adjusts the window once more
+                # after loading, so an early verdict captures a mid-flight snapshot
+                # (measured 798x600 at 3 s; the settled value was 1508x900).
+                # Keep watching until $restoreDeadline and re-apply if it drifts.
                 if ($posOk -and $sizeOk) {
                     if (-not $loggedOk) {
                         $loggedOk = $true
-                        ("[{0}] 窗口就位 L={1} T={2} {3}x{4}{5}（继续盯到 {6}s）" -f (Get-Date -Format 'HH:mm:ss'),
-                            $r.Left, $r.Top, $cw, $ch, $(if ($RestoreMax) { ' 最大化' }), $RestoreWindowSec) |
+                        ("[{0}] window settled L={1} T={2} {3}x{4}{5} (still watching to {6}s)" -f (Get-Date -Format 'HH:mm:ss'),
+                            $r.Left, $r.Top, $cw, $ch, $(if ($RestoreMax) { ' maximized' }), $RestoreWindowSec) |
                             Out-File $logFile -Append -Encoding utf8
                     }
                 }
                 elseif ($RestoreMax) {
-                    # 先还原成普通窗口，再挪到目标屏，再最大化 —— 少了 RESTORE 这步，
-                    # 窗口已被标记为最大化时后续 MoveWindow/MAXIMIZE 都不会真正生效。
+                    # Restore to a normal window, move it to the target monitor, then
+                    # maximize. Without the RESTORE step, MoveWindow/MAXIMIZE silently
+                    # do nothing on a window already flagged as maximized.
                     [void][PbiWin]::ShowWindow($main.Handle, 9)          # SW_RESTORE
                     Start-Sleep -Milliseconds 250
                     [void][PbiWin]::MoveWindow($main.Handle, $rc[0], $rc[1], 800, 600, $true)
@@ -187,21 +198,21 @@ if ($WatchPid -gt 0) {
             }
         }
         elseif (-not $restored -and (Get-Date) -ge $restoreDeadline) {
-            # 时间到，撒手不再跟用户抢窗口。记一笔最终状态，方便事后核对。
+            # Time is up - stop fighting for the window. Log the final state for review.
             $restored = $true
             $fin = Get-MainWindow -TargetPid $WatchPid
             if ($fin) {
                 $fr = New-Object WRECT
                 [void][PbiWin]::GetWindowRect($fin.Handle, [ref]$fr)
-                # 判定跟循环内同标准：位置+尺寸都对才算 OK
-                # （只比宽度曾把落在屏幕外的窗口误报成 OK，2026-07-30 实测）
+                # Same test as inside the loop: position AND size must both match.
+                # Comparing width alone once reported a window parked off-screen as OK.
                 $finOk = ([Math]::Abs($fr.Left - $rc[0]) -lt 20) -and ([Math]::Abs($fr.Top - $rc[1]) -lt 20) -and
                          ([Math]::Abs(($fr.Right-$fr.Left)-($rc[2]-$rc[0])) -lt 60) -and
                          ([Math]::Abs(($fr.Bottom-$fr.Top)-($rc[3]-$rc[1])) -lt 60)
-                ("[{0}] 守窗结束 最终 L={1} T={2} {3}x{4} 目标 {5}x{6} → {7}" -f (Get-Date -Format 'HH:mm:ss'),
+                ("[{0}] restore done final L={1} T={2} {3}x{4} target {5}x{6} -> {7}" -f (Get-Date -Format 'HH:mm:ss'),
                     $fr.Left, $fr.Top, ($fr.Right-$fr.Left), ($fr.Bottom-$fr.Top),
                     ($rc[2]-$rc[0]), ($rc[3]-$rc[1]),
-                    $(if ($finOk) { 'OK' } else { '不符' })) |
+                    $(if ($finOk) { 'OK' } else { 'MISMATCH' })) |
                     Out-File $logFile -Append -Encoding utf8
             }
         }
@@ -210,15 +221,15 @@ if ($WatchPid -gt 0) {
         foreach ($t in (Get-MatchingWindows -TargetPid $WatchPid -Titles $DialogTitles)) {
             [void][PbiWin]::PostMessage($t.Handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)  # WM_CLOSE
             $closed++
-            ("[{0}] 已关闭 title='{1}' class='{2}'" -f (Get-Date -Format 'HH:mm:ss'), $t.Title, $t.Class) |
+            ("[{0}] dismissed title='{1}' class='{2}'" -f (Get-Date -Format 'HH:mm:ss'), $t.Title, $t.Class) |
                 Out-File $logFile -Append -Encoding utf8
             Start-Sleep -Milliseconds 600
         }
         }
 
-        # 收工判定：窗口已就位 + 弹窗已关过（或本来就不管弹窗）
-        #   → 再宽限 $GraceSec 秒就退出，不再占着一个后台进程。
-        # 弹窗若始终没出现，则自然回退到 $DismissTimeout 超时（安全兜底）。
+        # Done when the window has settled AND a dialog was dismissed (or we ignore
+        # dialogs): wait $GraceSec more seconds, then stop holding a background process.
+        # If no dialog ever appears this falls back to the $DismissTimeout safety net.
         $jobDone = $restored -and ($closed -gt 0 -or $NoDismiss)
         if ($jobDone -and -not $doneAfter) { $doneAfter = (Get-Date).AddSeconds($GraceSec) }
         if ($doneAfter -and (Get-Date) -ge $doneAfter) { break }
@@ -226,15 +237,15 @@ if ($WatchPid -gt 0) {
         Start-Sleep -Milliseconds 400
     }
 
-    # 三种收工方式分开记：提前收工=活干完；目标进程已退出=用户自己关了 Desktop；等到超时=兜底
-    $how = if ($doneAfter) { '提前收工' } elseif ($processGone) { '目标进程已退出' } else { '等到超时' }
-    ("[{0}] 守候结束（{1}），共关闭 {2} 个`r`n" -f (Get-Date -Format 'HH:mm:ss'), $how, $closed) |
+    # Three distinct exits: work done / target process gone (user closed Desktop) / timeout
+    $how = if ($doneAfter) { 'work done' } elseif ($processGone) { 'target process gone' } else { 'timeout' }
+    ("[{0}] watch end ({1}), dismissed {2}" -f (Get-Date -Format 'HH:mm:ss'), $how, $closed) |
         Out-File $logFile -Append -Encoding utf8
     exit
 }
 
 # ============================================================
-#  正常模式
+#  Normal mode
 # ============================================================
 function Write-Step($msg) { Write-Host "  $msg" }
 
@@ -251,12 +262,13 @@ function Start-Watcher([int]$ProcId, [string]$Rect, [bool]$WasMax) {
     if ($WasMax)    { $args += '-RestoreMax' }
     Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList $args | Out-Null
     $what = @()
-    if (-not $NoDismiss) { $what += '关登录弹窗' }
-    if ($Rect)           { $what += '还原窗口位置' }
-    Write-Step ("守候进程已启动（{0}，{1} 秒）" -f ($what -join ' + '), $DismissTimeout)
+    if (-not $NoDismiss) { $what += 'dismiss sign-in' }
+    if ($Rect)           { $what += 'restore window' }
+    Write-Step ("Watcher started ({0}, {1}s)" -f ($what -join ' + '), $DismissTimeout)
 }
 
-# 记下窗口位置，重开后放回去 —— 否则会蹦回主屏，抢走外接大屏的工作区
+# Record where the window is so it can be put back; otherwise it bounces to the
+# primary monitor and takes over the external display
 function Get-Placement([IntPtr]$Hwnd) {
     if ($Hwnd -eq [IntPtr]::Zero) { return $null }
     $r = New-Object WRECT
@@ -267,9 +279,11 @@ function Get-Placement([IntPtr]$Hwnd) {
     }
 }
 
-# 记下的矩形可信吗 —— 退化尺寸或不在任何屏幕内，说明窗口当时处于奇怪状态
-# （最小化会量到 -32000；被拖到屏幕边缘只露一角时实测量到过 -21281,-20853 107x19）。
-# 把这种矩形照搬给重开后的窗口，只会把它藏到屏幕外，还跟用户抢满整个守窗期。
+# Is the recorded rectangle trustworthy? A degenerate size, or one outside every
+# screen, means the window was in a strange state (minimized reads -32000; a window
+# dragged mostly off-screen once measured -21281,-20853 107x19). Replaying such a
+# rectangle only hides the new window off-screen and fights the user for the whole
+# restore window.
 function Test-RectSane([string]$Rect) {
     $p = $Rect -split ',' | ForEach-Object { [int]$_ }
     if (($p[2] - $p[0]) -lt 200 -or ($p[3] - $p[1]) -lt 150) { return $false }
@@ -281,42 +295,43 @@ function Test-RectSane([string]$Rect) {
     return $false
 }
 
-# ---------- 1. 确定目标 .pbip ----------
+# ---------- 1. Resolve the target .pbip ----------
 if (-not $Path -and (Test-Path $memFile)) {
     try {
         $Path = (Get-Content $memFile -Raw -Encoding UTF8 | ConvertFrom-Json).Path
-        Write-Step "沿用上次路径: $Path"
+        Write-Step "Using remembered path: $Path"
     } catch { }
 }
 
-# ---------- 2. 找运行中的 Desktop ----------
+# ---------- 2. Find the running Desktop ----------
 $procs = @(Get-Process -Name 'PBIDesktop' -ErrorAction SilentlyContinue)
 
 if ($procs.Count -eq 0) {
-    Write-Host "Power BI Desktop 未运行。"
+    Write-Host "Power BI Desktop is not running."
     if ($ListOnly) { return }
-    if (-not $Path) { throw "没有可用路径。请用 -Path 指定 .pbip。" }
-    if (-not (Test-Path $Path)) { throw "路径不存在: $Path" }
-    Write-Step "直接打开..."
+    if (-not $Path) { throw "No path available. Pass -Path <file.pbip>." }
+    if (-not (Test-Path $Path)) { throw "Path does not exist: $Path" }
+    Write-Step "Opening it..."
     $exe = 'C:\Program Files\Microsoft Power BI Desktop\bin\PBIDesktop.exe'
     $np = Start-Process -FilePath $exe -ArgumentList "`"$Path`"" -PassThru
     @{ Path = $Path } | ConvertTo-Json | Out-File $memFile -Encoding utf8
     Start-Watcher -ProcId $np.Id -Rect '' -WasMax $false
-    Write-Host "已启动（常规版）。"
+    Write-Host "Started (regular edition)."
     return
 }
 
 if ($procs.Count -gt 1 -and -not $Id) {
-    # 多 agent 共用一机：-Path 就是身份。按项目名匹配窗口标题，命中唯一就不再要求 -Id
+    # Several agents on one machine: -Path is the identity. Match the project name
+    # against window titles; a unique hit means -Id is not needed.
     if ($Path) {
         $stem = [WildcardPattern]::Escape([IO.Path]::GetFileNameWithoutExtension($Path))
         $byTitle = @($procs | Where-Object { $_.MainWindowTitle -like "$stem - *" })
         if ($byTitle.Count -eq 1) { $procs = $byTitle }
     }
     if ($procs.Count -gt 1) {
-        Write-Host "发现多个 Desktop 实例，请用 -Id 指定要重启哪个：`n"
+        Write-Host "Several Desktop instances found. Pass -Id to pick one:`n"
         foreach ($p in $procs) {
-            $ver = if ($p.Path -like '*Desktop RS*') { 'RS版' } else { '常规版' }
+            $ver = if ($p.Path -like '*Desktop RS*') { 'Report Server' } else { 'regular' }
             Write-Host ("  -Id {0}   [{1}]  {2}" -f $p.Id, $ver, $p.MainWindowTitle)
         }
         return
@@ -324,84 +339,88 @@ if ($procs.Count -gt 1 -and -not $Id) {
 }
 
 $target = if ($Id) { $procs | Where-Object { $_.Id -eq $Id } } else { $procs[0] }
-if (-not $target) { throw "找不到 PID $Id 的 Desktop 进程。" }
+if (-not $target) { throw "No Desktop process with PID $Id." }
 
-# 单实例但与 -Path 的项目不符 —— 多半是别的 agent/会话的 Desktop，动手前先喊一声
+# One instance, but it does not match -Path: most likely another agent's or session's
+# Desktop, so say so before touching it
 if ($Path -and $target.MainWindowTitle) {
     $stem = [WildcardPattern]::Escape([IO.Path]::GetFileNameWithoutExtension($Path))
     if ($target.MainWindowTitle -notlike "$stem - *") {
-        Write-Host "⚠ 运行中的实例是「$($target.MainWindowTitle)」，与 -Path 的项目不一致 —— 将结束它并打开 $(Split-Path $Path -Leaf)" -ForegroundColor Yellow
+        Write-Host "WARNING: the running instance is '$($target.MainWindowTitle)', which does not match -Path. It will be terminated and $(Split-Path $Path -Leaf) opened instead." -ForegroundColor Yellow
     }
 }
 
 $exePath = $target.Path
-$edition = if ($exePath -like '*Desktop RS*') { 'RS版' } else { '常规版' }
+$edition = if ($exePath -like '*Desktop RS*') { 'Report Server' } else { 'regular' }
 
-# ---------- 3. 报告状态 ----------
-Write-Host "`n当前实例"
-Write-Step "PID      : $($target.Id)"
-Write-Step "版本     : $edition"
-Write-Step "窗口标题 : $($target.MainWindowTitle)"
-Write-Step "启动于   : $($target.StartTime)"
+# ---------- 3. Report state ----------
+Write-Host "`nCurrent instance"
+Write-Step "PID       : $($target.Id)"
+Write-Step "Edition   : $edition"
+Write-Step "Title     : $($target.MainWindowTitle)"
+Write-Step "Started   : $($target.StartTime)"
 
-# 磁盘是否比 Desktop 更新 —— 判断「该不该重载」的直接依据
+# Is the disk newer than Desktop? This is the direct basis for 'should we reload'
 if ($Path -and (Test-Path $Path)) {
     $projDir = Split-Path $Path -Parent
     $newer = @(Get-ChildItem $projDir -Recurse -File -Include *.tmdl,*.json,*.pbir,*.pbism -ErrorAction SilentlyContinue |
                Where-Object { $_.LastWriteTime -gt $target.StartTime })
     if ($newer.Count -gt 0) {
-        Write-Host "`n磁盘已变更（Desktop 打开之后）—— 需要重载" -ForegroundColor Yellow
+        Write-Host "`nDisk changed since Desktop opened - reload needed" -ForegroundColor Yellow
         $newer | Sort-Object LastWriteTime -Descending | Select-Object -First 6 | ForEach-Object {
             Write-Step ("{0:HH:mm:ss}  {1}" -f $_.LastWriteTime, $_.Name)
         }
-        if ($newer.Count -gt 6) { Write-Step "... 共 $($newer.Count) 个文件" }
+        if ($newer.Count -gt 6) { Write-Step "... $($newer.Count) files in total" }
     } else {
-        Write-Host "`n磁盘无变更 —— Desktop 已是最新，其实不用重载" -ForegroundColor DarkGray
+        Write-Host "`nNo disk changes - Desktop is up to date, no reload needed" -ForegroundColor DarkGray
     }
 }
 
 $msmd = @(Get-WmiObject Win32_Process -Filter "Name='msmdsrv.exe'" -ErrorAction SilentlyContinue |
           Where-Object { $_.ParentProcessId -eq $target.Id })
-if ($msmd.Count -gt 0) { Write-Step "关联 msmdsrv : $(($msmd | ForEach-Object { $_.ProcessId }) -join ', ')" }
+if ($msmd.Count -gt 0) { Write-Step "msmdsrv   : $(($msmd | ForEach-Object { $_.ProcessId }) -join ', ')" }
 
-if ($ListOnly) { Write-Host "`n(-ListOnly，未做任何操作)"; return }
+if ($ListOnly) { Write-Host "`n(-ListOnly - nothing was changed)"; return }
 
-if (-not $Path) { throw "`n没有可用路径，无法重开。请用 -Path 指定 .pbip。" }
-if (-not (Test-Path $Path)) { throw "`n路径不存在: $Path" }
+if (-not $Path) { throw "`nNo path available, cannot reopen. Pass -Path <file.pbip>." }
+if (-not (Test-Path $Path)) { throw "`nPath does not exist: $Path" }
 
-# ---------- 3.5 确认 ----------
+# ---------- 3.5 Confirmation ----------
 #
-# 为什么非问不可：有两种方向相反的情况，工具从外部分不出来
-#   ① 磁盘 TMDL 被改过、Desktop 内存是旧的  → 绝不能保存（保存会覆盖磁盘改动）
-#   ② 你刚在 Desktop 里改了还没存           → 必须先保存（不然杀掉就没了）
-# Desktop 的标题栏不带修改标记，枚举窗口也拿不到「脏」状态 —— 只有人知道。
+# Why this cannot be skipped: two opposite situations exist and the tool cannot
+# tell them apart from outside.
+#   1. TMDL on disk was edited, Desktop's memory is stale -> never save (it would
+#      overwrite the disk changes)
+#   2. The user just edited in Desktop without saving -> must save first (otherwise
+#      terminating discards it)
+# Desktop's title bar carries no modified marker and window enumeration exposes no
+# dirty state - only a human knows.
 #
-# 不弹 GUI 对话框、也不用 Read-Host 阻塞等待（2026-07-30 用户要求：
-# 他装了 Clawd 桌宠，对话里问就看得到，别再额外弹窗打扰）。
-# 改成：没给 -Yes 就直接停下并提示。确认这件事发生在对话里，不在脚本里。
+# No GUI dialog, no blocking Read-Host: without -Yes the script simply stops and
+# says so. Confirmation belongs in the conversation, not in the script.
 if (-not $Yes) {
-    Write-Host "`n⚠ 即将结束 Power BI Desktop，它内存里未保存的改动会全部丢失。" -ForegroundColor Yellow
+    Write-Host "`nWARNING: this will terminate Power BI Desktop. Every unsaved change in its memory is lost." -ForegroundColor Yellow
     Write-Host "   $(Split-Path $Path -Leaf)"
     Write-Host ""
-    Write-Host "   确认 Desktop 里没有未保存的改动后，加 -Yes 重跑：" -ForegroundColor Yellow
+    Write-Host "   Once you have confirmed there are no unsaved changes, re-run with -Yes:" -ForegroundColor Yellow
     Write-Host "     & `"$PSCommandPath`" -Yes"
     Write-Host ""
-    Write-Host "已停下，什么都没动。"
+    Write-Host "Stopped. Nothing was changed."
     return
 }
 
-# ---------- 4. 杀掉 ----------
-Write-Host "`n重启中"
+# ---------- 4. Terminate ----------
+Write-Host "`nRestarting"
 
-# 杀之前记下窗口在哪、是不是最大化，重开后放回去
+# Record where the window is and whether it is maximized, to restore it after reopening
 $placement = Get-Placement -Hwnd $target.MainWindowHandle
 if ($placement -and -not (Test-RectSane $placement.Rect)) {
-    Write-Step "记下的窗口位置异常（$($placement.Rect)），放弃还原，重开用默认位置"
+    Write-Step "Recorded window rect looks wrong ($($placement.Rect)); skipping restore, reopening at the default position"
     $placement = $null
 }
-if ($placement) { Write-Step "记下窗口位置 $($placement.Rect)$(if ($placement.IsMax) { ' (最大化)' })" }
+if ($placement) { Write-Step "Window rect recorded: $($placement.Rect)$(if ($placement.IsMax) { ' (maximized)' })" }
 
-Write-Step "结束 Desktop（不保存）..."
+Write-Step "Terminating Desktop (no save)..."
 Stop-Process -Id $target.Id -Force
 
 $deadline = (Get-Date).AddSeconds(20)
@@ -411,14 +430,14 @@ while ((Get-Process -Id $target.Id -ErrorAction SilentlyContinue) -and (Get-Date
 
 foreach ($m in $msmd) {
     if (Get-Process -Id $m.ProcessId -ErrorAction SilentlyContinue) {
-        Write-Step "清理残留 msmdsrv $($m.ProcessId)..."
+        Write-Step "Cleaning up orphaned msmdsrv $($m.ProcessId)..."
         Stop-Process -Id $m.ProcessId -Force -ErrorAction SilentlyContinue
     }
 }
 
-# ---------- 5. 重开 ----------
+# ---------- 5. Reopen ----------
 Start-Sleep -Milliseconds 500
-Write-Step "重新打开 [$edition] $(Split-Path $Path -Leaf) ..."
+Write-Step "Reopening [$edition] $(Split-Path $Path -Leaf) ..."
 $newProc = Start-Process -FilePath $exePath -ArgumentList "`"$Path`"" -PassThru
 
 @{ Path = $Path } | ConvertTo-Json | Out-File $memFile -Encoding utf8
@@ -427,5 +446,5 @@ Start-Watcher -ProcId $newProc.Id `
     -Rect   $(if ($placement) { $placement.Rect }  else { '' }) `
     -WasMax $(if ($placement) { [bool]$placement.IsMax } else { $false })
 
-Write-Host "`n完成。Desktop 正在加载，模型大的话等一会儿。"
-Write-Host "弹窗处理记录: $logFile"
+Write-Host "`nDone. Desktop is loading - a large model takes a while."
+Write-Host "Watcher log: $logFile"

@@ -1,40 +1,46 @@
 ﻿<#
 .SYNOPSIS
-    把 Power BI Desktop 窗口截成 PNG，供 agent 直接查看渲染结果。
+    Capture the Power BI Desktop window to a PNG so an agent can see what rendered.
 
 .DESCRIPTION
-    报表层（visual 渲染）在 pbip 源文件上看不出效果，只能看实际画面。
-    这个脚本把 Desktop 窗口抓成 PNG，agent 用 Read 工具能直接看图，
-    从而对报表层也形成「改 → 看 → 再改」的闭环。
+    The report layer renders to pixels: the .pbip sources say nothing about how a
+    visual actually looks. This captures the Desktop window to a PNG that an agent
+    can open with the Read tool, closing the edit -> look -> edit loop for the
+    report layer too.
 
-    优先用 PrintWindow（可抓被部分遮挡、非前台的窗口），拿到近乎纯色的图
-    则退回 CopyFromScreen（抓屏幕像素，要求窗口可见不被挡）。
+    Prefers PrintWindow (captures non-foreground and partially occluded windows);
+    falls back to CopyFromScreen when the result comes back near-blank, which does
+    require the window to be visible and unobstructed.
 
-    ⭐ 截图时会顺手检测有没有对话框，有就把它的文字一并输出 ——
-       报错弹窗的文字用文本拿到远比从图片认字可靠，而这个检测只花 20~130 ms
-       （截图本身约 1100 ms），占比可忽略；没有对话框就什么都不输出。
+    When a dialog is open its text is printed alongside the capture. Reading an
+    error as text is far more reliable than reading it off pixels, and detection
+    costs 20-130 ms against a ~1100 ms capture. Nothing is printed when no dialog
+    is up.
 
 .PARAMETER Out
-    输出 PNG 路径。默认 %TEMP%\pbi-shot.png
+    Output PNG path. Defaults to %TEMP%\pbi-shot.png
 
 .PARAMETER Id
-    指定 PBIDesktop 进程 PID（多实例时用）。
+    PBIDesktop process id, for when several instances run.
 
 .PARAMETER FullScreen
-    截整个虚拟屏幕，而不是只截 Desktop 窗口。
-    ⚠️ 会拍到用户屏幕上的一切，涉及隐私，默认别用。
+    Capture the whole virtual screen instead of just the Desktop window.
+    WARNING: this records everything on screen. Privacy-sensitive; avoid by default.
 
 .PARAMETER Text
-    不截图，改用 UI Automation 把窗口文字读成纯文本。
-    供**无视觉能力的模型**读报错用 —— 图片它看不见，文字可以。
-    读得到：对话框文字、字段/表树、以及**报表画布内容**——视觉对象标题、
-            矩阵列头、单元格数值都在（内嵌 WebView 的无障碍树是暴露的）。
-    读不到：布局、配色、间距。即「报表说了什么」能读，「长什么样」不能。
-    ⚠️ 输出含真实业务数据，与截图同等对待：不外发、不入库。
+    Read the window as plain text through UI Automation instead of capturing pixels.
+    Intended for models WITHOUT vision, which cannot see an image but can read text.
+    Reachable: dialog text, the field/table tree, and the report canvas itself -
+        visual titles, matrix column headers and cell values are all exposed
+        through the embedded WebView's accessibility tree.
+    Not reachable: layout, colour, spacing. It tells you what the report SAYS,
+        never how it LOOKS.
+    WARNING: the output contains real business data. Treat it exactly like a
+        capture: never publish it, never commit it.
 
 .EXAMPLE
     .\pbi-shot.ps1
-    .\pbi-shot.ps1 -Out D:\tmp\a.png
+    .\pbi-shot.ps1 -Out D:	mp.png
     .\pbi-shot.ps1 -Text
 #>
 [CmdletBinding()]
@@ -67,14 +73,14 @@ public class Shot {
 
 function Get-TargetPid {
     $procs = @(Get-Process -Name 'PBIDesktop' -ErrorAction SilentlyContinue)
-    if ($procs.Count -eq 0) { throw 'Power BI Desktop 未运行。' }
+    if ($procs.Count -eq 0) { throw 'Power BI Desktop is not running.' }
     if ($Id) { $procs = @($procs | Where-Object { $_.Id -eq $Id }) }
-    if ($procs.Count -eq 0) { throw "找不到 PID $Id。" }
+    if ($procs.Count -eq 0) { throw "No process with PID $Id." }
     return $procs[0].Id
 }
 
 # ============================================================
-#  UI Automation：读窗口文字
+#  UI Automation: read the window as text
 # ============================================================
 function Get-TopWindows([int]$ProcId) {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes -ErrorAction SilentlyContinue
@@ -90,9 +96,9 @@ function Get-TopWindows([int]$ProcId) {
     return [pscustomobject]@{ Main = $main; Dialogs = $dialogs }
 }
 
-# $Only 不为空时只保留这些 ControlType。
-# 无对话框时用它滤掉功能区按钮/分组/页签这类静态噪音 —— 它们每次都一样，
-# 白占几十行上下文（设计原则：轻量）。
+# When $Only is non-empty, keep only these ControlTypes. With no dialog up this
+# filters out ribbon buttons, groups and tabs - static noise that is identical every
+# time and would waste dozens of lines of context.
 function Write-UiaTree($el, [int]$Cap, $Only) {
     $kids = $el.FindAll([System.Windows.Automation.TreeScope]::Descendants,
                         [System.Windows.Automation.Condition]::TrueCondition)
@@ -107,49 +113,49 @@ function Write-UiaTree($el, [int]$Cap, $Only) {
         if ($nm.Length -gt 200) { $nm = $nm.Substring(0, 200) + '…' }
         Write-Output ("    [{0,-11}] {1}" -f $ct, $nm)
         $n++
-        if ($n -ge $Cap) { Write-Output "    …已截断（达上限 $Cap）"; break }
+        if ($n -ge $Cap) { Write-Output "    ...truncated (cap $Cap reached)"; break }
     }
-    if ($n -eq 0) { Write-Output '    (无可读文字)' }
+    if ($n -eq 0) { Write-Output '    (no readable text)' }
 }
 
-# 有对话框就把它的文字打出来。返回是否找到。
+# Print the text of any open dialog. Returns whether one was found.
 function Show-DialogText($wins) {
     if ($wins.Dialogs.Count -eq 0) { return $false }
     Write-Output ""
-    Write-Output ("⚠ 检测到 " + $wins.Dialogs.Count + " 个对话框，文字如下：")
+    Write-Output ("WARNING: " + $wins.Dialogs.Count + " dialog(s) detected. Text follows:")
     foreach ($d in $wins.Dialogs) {
-        $t = $d.Current.Name; if (-not $t) { $t = '(无标题)' }
+        $t = $d.Current.Name; if (-not $t) { $t = '(untitled)' }
         Write-Output ""
-        Write-Output ("=== 对话框：" + $t + " ===")
+        Write-Output ("=== Dialog: " + $t + " ===")
         Write-UiaTree $d 120 $null
     }
     return $true
 }
 
 # ============================================================
-#  -Text：纯文本模式
+#  -Text: plain-text mode
 # ============================================================
 if ($Text) {
     $tp = Get-TargetPid
     $wins = Get-TopWindows $tp
-    Write-Output ("PID    : " + $tp)
-    Write-Output ("主窗口 : " + $(if ($wins.Main) { $wins.Main.Current.Name } else { '(未找到，可能还在加载)' }))
+    Write-Output ("PID         : " + $tp)
+    Write-Output ("Main window : " + $(if ($wins.Main) { $wins.Main.Current.Name } else { '(not found - may still be loading)' }))
 
     if (-not (Show-DialogText $wins)) {
         if ($wins.Main) {
             Write-Output ""
-            Write-Output "无对话框。只列内容类元素（已滤掉功能区按钮等静态噪音）："
+            Write-Output "No dialog. Listing content elements only (ribbon buttons and other static noise filtered out):"
             Write-Output ""
             Write-UiaTree $wins.Main 40 @('TreeItem', 'Edit', 'Document', 'DataItem', 'ListItem')
         }
     }
     Write-Output ""
-    Write-Output "提示：要看报表渲染成什么样，必须用截图（去掉 -Text），且需要多模态模型。"
+    Write-Output "Note: to see how the report LOOKS, capture an image (drop -Text) - that requires a vision-capable model."
     return
 }
 
 # ============================================================
-#  截图
+#  Capture
 # ============================================================
 function Save-Png($bmp, $path) {
     $dir = Split-Path $path -Parent
@@ -157,7 +163,7 @@ function Save-Png($bmp, $path) {
     $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
 }
 
-# 图是不是几乎全白/全黑 —— 用来判断 PrintWindow 有没有真的画上东西
+# Is the bitmap nearly all one colour? Used to tell whether PrintWindow actually drew
 function Test-Blank($bmp) {
     $step = [Math]::Max(1, [int]($bmp.Width / 40))
     $seen = @{}
@@ -171,7 +177,7 @@ function Test-Blank($bmp) {
     return $true
 }
 
-# ---------- 整屏 ----------
+# ---------- Full screen ----------
 if ($FullScreen) {
     $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $bmp = New-Object System.Drawing.Bitmap($vs.Width, $vs.Height)
@@ -179,12 +185,12 @@ if ($FullScreen) {
     $g.CopyFromScreen($vs.X, $vs.Y, 0, 0, $bmp.Size)
     $g.Dispose()
     Save-Png $bmp $Out
-    Write-Output ("整屏 {0}x{1} -> {2}" -f $bmp.Width, $bmp.Height, $Out)
+    Write-Output ("full screen {0}x{1} -> {2}" -f $bmp.Width, $bmp.Height, $Out)
     $bmp.Dispose()
     return
 }
 
-# ---------- 找主窗口 ----------
+# ---------- Locate the main window ----------
 $targetPid = [uint32](Get-TargetPid)
 
 $found = New-Object System.Collections.ArrayList
@@ -200,17 +206,17 @@ $cb = [Shot+EnumWindowsProc]{
     return $true
 }
 [void][Shot]::EnumWindows($cb, [IntPtr]::Zero)
-if ($found.Count -eq 0) { throw '找不到 PBIDesktop 主窗口（可能还在加载）。' }
+if ($found.Count -eq 0) { throw 'PBIDesktop main window not found (it may still be loading).' }
 
 $win = $found[0]
 $hwnd = $win.Handle
 
-# 🔴 绝不主动置前（SetForegroundWindow）—— 用户可能正在外接屏上干别的事，
-#    抢焦点会把 Desktop 拽到前台打断他。PrintWindow 本来就能抓非前台、
-#    甚至被遮挡的窗口，2026-07-30 实测一次成功、没走回退。
-#    只有最小化时才恢复（最小化状态下窗口没有有效尺寸，抓不了）。
+# Never call SetForegroundWindow: the user may be working on another monitor, and
+# stealing focus yanks Desktop to the front and interrupts them. PrintWindow already
+# handles non-foreground and even occluded windows. Only a minimized window is
+# restored, because it has no usable size to capture.
 if ([Shot]::IsIconic($hwnd)) {
-    [void][Shot]::ShowWindow($hwnd, 4)   # SW_SHOWNOACTIVATE：还原但不激活、不抢焦点
+    [void][Shot]::ShowWindow($hwnd, 4)   # SW_SHOWNOACTIVATE: restore without activating or stealing focus
     Start-Sleep -Milliseconds 700
 }
 
@@ -218,9 +224,9 @@ $r = New-Object RECT
 [void][Shot]::GetWindowRect($hwnd, [ref]$r)
 $w = $r.Right - $r.Left
 $h = $r.Bottom - $r.Top
-if ($w -le 0 -or $h -le 0) { throw "窗口尺寸异常: ${w}x${h}" }
+if ($w -le 0 -or $h -le 0) { throw "Bad window size: ${w}x${h}" }
 
-# ---------- 抓图：先 PrintWindow，空白则退回 CopyFromScreen ----------
+# ---------- Capture: PrintWindow first, fall back to CopyFromScreen if blank ----------
 $bmp = New-Object System.Drawing.Bitmap($w, $h)
 $g = [System.Drawing.Graphics]::FromImage($bmp)
 $hdc = $g.GetHdc()
@@ -235,16 +241,16 @@ if (-not $ok -or (Test-Blank $bmp)) {
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.CopyFromScreen($r.Left, $r.Top, 0, 0, $bmp.Size)
     $g.Dispose()
-    $method = 'CopyFromScreen(回退)'
-    Write-Warning "PrintWindow 失败，已回退 CopyFromScreen —— 它抓的是屏幕像素，若窗口被别的东西挡住，图里就是那个东西。看到不对劲请以此为准。"
+    $method = 'CopyFromScreen (fallback)'
+    Write-Warning "PrintWindow failed; fell back to CopyFromScreen. That captures raw screen pixels, so anything covering the window appears in the image. Treat an odd-looking capture accordingly."
 }
 
 Save-Png $bmp $Out
-Write-Output ("{0}  {1}x{2}  方式={3}" -f $win.Title, $w, $h, $method)
+Write-Output ("{0}  {1}x{2}  method={3}" -f $win.Title, $w, $h, $method)
 Write-Output $Out
 $bmp.Dispose()
 
-# ---------- 顺手把对话框文字也给出来 ----------
-# 报错弹窗的文字用文本拿到远比从图片认字可靠；检测只花 20~130 ms，
-# 相比截图的 ~1100 ms 可忽略。没有对话框就什么都不输出，不占上下文。
+# ---------- Report any dialog text alongside the capture ----------
+# Reading an error as text beats recognizing it in an image, and detection costs
+# 20-130 ms against a ~1100 ms capture. Nothing is printed when no dialog is up.
 try { [void](Show-DialogText (Get-TopWindows $targetPid)) } catch { }

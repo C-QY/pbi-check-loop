@@ -1,19 +1,20 @@
 ﻿<#
 .SYNOPSIS
-    安装 pbi-check-loop：脚本装到 ~\.claude\tools\，skill 装到 ~\.claude\skills\。
+    Install pbi-check-loop: scripts into ~\.claude	ools\, skill into ~\.claude\skills\.
 
 .DESCRIPTION
-    这套工具的使用者是 AI agent，不是人。所以「安装」除了放脚本，
-    更重要的是把 skill 装好 —— agent 靠它知道这工具存在、什么时候该用、有哪些坑。
+    The consumer of these tools is an AI agent, not a human. So "installing" is mostly about
+    placing the skill: that is how an agent learns the tools exist, when to reach for them,
+    and which pitfalls to avoid.
 
 .PARAMETER ToolsDir
-    脚本安装位置。默认 ~\.claude\tools
+    Where the scripts go. Default ~\.claude	ools
 
 .PARAMETER SkillsDir
-    skill 安装位置。默认 ~\.claude\skills
+    Where the skill goes. Default ~\.claude\skills
 
 .PARAMETER Uninstall
-    卸载：删掉装过去的文件（不动本仓库）。
+    Remove the installed files. Leaves this repository alone.
 
 .EXAMPLE
     .\install.ps1
@@ -34,82 +35,100 @@ $skillDest  = Join-Path $SkillsDir $skillName
 
 function Say($msg, $color = 'Gray') { Write-Host "  $msg" -ForegroundColor $color }
 
-# ---------------- 卸载 ----------------
+# ---------------- Uninstall ----------------
 if ($Uninstall) {
-    Write-Host "`n卸载 pbi-check-loop"
+    Write-Host "`nUninstalling pbi-check-loop"
     foreach ($s in $scripts) {
         $p = Join-Path $ToolsDir $s
-        if (Test-Path $p) { Remove-Item $p -Force; Say "已删 $p" }
+        if (Test-Path $p) { Remove-Item $p -Force; Say "removed $p" }
     }
-    # 运行时产生的附属文件一并清掉
+    # Clean up files produced at runtime as well
     foreach ($f in @('pbi-reload.last.json', 'pbi-reload.dialogs.log')) {
         $p = Join-Path $ToolsDir $f
-        if (Test-Path $p) { Remove-Item $p -Force; Say "已删 $p" }
+        if (Test-Path $p) { Remove-Item $p -Force; Say "removed $p" }
     }
-    if (Test-Path $skillDest) { Remove-Item $skillDest -Recurse -Force; Say "已删 $skillDest" }
-    Write-Host "`n卸载完成。" -ForegroundColor Green
+    if (Test-Path $skillDest) { Remove-Item $skillDest -Recurse -Force; Say "removed $skillDest" }
+    Write-Host "`nUninstalled." -ForegroundColor Green
     return
 }
 
-# ---------------- 前置检查 ----------------
-Write-Host "`n安装 pbi-check-loop"
+# ---------------- Preflight ----------------
+Write-Host "`nInstalling pbi-check-loop"
 
-if ($PSVersionTable.PSVersion.Major -lt 5) { throw "需要 PowerShell 5.1 或更高，当前 $($PSVersionTable.PSVersion)" }
+if ($PSVersionTable.PSVersion.Major -lt 5) { throw "PowerShell 5.1 or newer required; found $($PSVersionTable.PSVersion)" }
+
+# One-line install: irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/install.ps1 | iex
+# Piped into iex there are no repo files alongside this script ($PSScriptRoot is empty),
+# so clone to a temp directory first and run the real install from there.
+if (-not $src -or -not (Test-Path (Join-Path $src 'scripts\pbi-reload.ps1'))) {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw "git is required for the one-line install. Install git, or clone the repo and run .\install.ps1 manually."
+    }
+    $tmp = Join-Path $env:TEMP 'pbi-check-loop-install'
+    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+    Say "Cloning the repository..."
+    git clone --depth 1 https://github.com/C-QY/pbi-check-loop $tmp 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Clone failed. Check your network, or clone manually and run .\install.ps1." }
+    & (Join-Path $tmp 'install.ps1') -ToolsDir $ToolsDir -SkillsDir $SkillsDir
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    return
+}
 
 $missing = @($scripts | Where-Object { -not (Test-Path (Join-Path $src "scripts\$_")) })
-if ($missing) { throw "仓库不完整，缺少: $($missing -join ', ')。请在克隆下来的仓库根目录运行本脚本。" }
-if (-not (Test-Path (Join-Path $src 'SKILL.md'))) { throw "缺少 SKILL.md" }
+if ($missing) { throw "Incomplete repository, missing: $($missing -join ', '). Run this from the root of a cloned repo." }
+if (-not (Test-Path (Join-Path $src 'SKILL.md'))) { throw "SKILL.md not found" }
 
-# ---------------- 装脚本 ----------------
+# ---------------- Install scripts ----------------
 New-Item -ItemType Directory -Path $ToolsDir -Force | Out-Null
-Write-Host "`n[1/3] 安装脚本 -> $ToolsDir"
+Write-Host "`n[1/3] Scripts -> $ToolsDir"
 foreach ($s in $scripts) {
     Copy-Item (Join-Path $src "scripts\$s") (Join-Path $ToolsDir $s) -Force
     Say $s
 }
 
-# ---------------- 装 skill ----------------
+# ---------------- Install skill ----------------
 New-Item -ItemType Directory -Path $skillDest -Force | Out-Null
-Write-Host "`n[2/3] 安装 skill -> $skillDest"
+Write-Host "`n[2/3] Skill -> $skillDest"
 Copy-Item (Join-Path $src 'SKILL.md') (Join-Path $skillDest 'SKILL.md') -Force
 Say "SKILL.md"
 
-# ---------------- 自检 ----------------
-Write-Host "`n[3/3] 自检"
+# ---------------- Self-check ----------------
+Write-Host "`n[3/3] Self-check"
 $bad = 0
 foreach ($s in $scripts) {
     $p = Join-Path $ToolsDir $s
 
-    # 语法能不能解析
+    # Does it parse?
     $err = $null
     $null = [System.Management.Automation.Language.Parser]::ParseFile($p, [ref]$null, [ref]$err)
     $synOk = -not ($err -and $err.Count -gt 0)
 
-    # 必须是 UTF-8 带 BOM —— 脚本含中文，PS 5.1 缺 BOM 会按 GBK 误读导致解析失败
+    # Must be UTF-8 WITH BOM: these scripts contain non-ASCII dialog titles, and without a
+    # BOM PowerShell 5.1 reads them in the system ANSI codepage and parsing breaks
     $b = [System.IO.File]::ReadAllBytes($p)[0..2]
     $bomOk = ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
 
-    if ($synOk -and $bomOk) { Say "$s  语法 OK  BOM OK" 'Green' }
+    if ($synOk -and $bomOk) { Say "$s  syntax OK  BOM OK" 'Green' }
     else {
         $bad++
-        Say ("$s  语法={0}  BOM={1}" -f $(if($synOk){'OK'}else{'失败'}), $(if($bomOk){'OK'}else{'缺失'})) 'Red'
-        if ($err) { $err | ForEach-Object { Say ("    第 " + $_.Extent.StartLineNumber + " 行: " + $_.Message) 'Red' } }
+        Say ("$s  syntax={0}  BOM={1}" -f $(if($synOk){'OK'}else{'FAILED'}), $(if($bomOk){'OK'}else{'MISSING'})) 'Red'
+        if ($err) { $err | ForEach-Object { Say ("    line " + $_.Extent.StartLineNumber + ": " + $_.Message) 'Red' } }
     }
 }
 
-if ($bad -gt 0) { throw "自检未通过，装了 $bad 个有问题的文件。" }
+if ($bad -gt 0) { throw "Self-check failed on $bad file(s)." }
 
-# ---------------- 完成 ----------------
-Write-Host "`n安装完成。" -ForegroundColor Green
+# ---------------- Done ----------------
+Write-Host "`nInstalled." -ForegroundColor Green
 Write-Host @"
 
-  用法（agent 直接按全路径调用即可）：
+  Usage (an agent calls these by full path):
 
-    & "`$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -ListOnly        # 看状态
-    & "`$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Yes             # 重载
-    & "`$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Out shot.png      # 截图
+    & "`$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -ListOnly    # check state
+    & "`$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Yes         # reload
+    & "`$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Out shot.png  # capture
 
-  重启 Claude Code 后 skill 生效，agent 会在合适时机自动想起来用它。
+  Restart Claude Code to activate the skill; the agent will reach for it on its own.
 
-  卸载：  .\install.ps1 -Uninstall
+  Uninstall:  .\install.ps1 -Uninstall
 "@ -ForegroundColor DarkGray

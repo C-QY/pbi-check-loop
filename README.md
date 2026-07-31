@@ -1,117 +1,349 @@
 # pbi-check-loop
 
-给 **AI agent** 用的 Power BI Desktop 控制工具——PBI 开发的 **loop engineering**：
-把「改 → 看 → 判 → 再改」的反馈闭环从人手里还给 agent。
+> **Power BI Desktop cannot reload a PBIP that changed on disk — there is no such command.**
+> This adds it, plus a way for an agent to see what rendered, so AI-assisted Power BI
+> development becomes a closed loop instead of one that stops for a human every iteration.
 
-**[English →](README_EN.md)** · 仅 Windows · PowerShell 5.1+
+**[中文 →](README.zh-CN.md)** · Windows only · PowerShell 5.1+ · MIT
 
-> 使用者是 agent，不是人。所以它封装成 Claude Code 的 **skill**，而不是给人敲的命令行别名。
+---
 
-## 解决什么问题
+## ✨ What It Does
 
-大模型能自主开发软件，靠的是**能自己验证**——跑测试、读输出、再改。
-PBI 开发在两个地方结构性地掐断了这条链：
-
-**断点一：模型层的真相有两份。**
-TMDL 在磁盘上，Power BI Desktop 在内存里另有一份。Agent 改了磁盘，Desktop 毫不知情；
-而且此时按 Ctrl+S 会**用旧内存覆盖掉新磁盘**。所以每次迭代都必须有人手动关掉重开。
-
-**断点二：报表层的产物是像素，不是文件。**
-Agent 能写 `visual.json`，但看不见它渲染成什么样——对不对、有没有错位，一概不知。
-
-结果是**人变成了 agent 的眼睛和手**。这不是习惯问题，是结构问题。
-
-## 做了什么
-
-三个模式合起来撑起一个闭环：**agent 改盘 → 重载重读 → 截图自检 → 与判据（原型/预期）对比 → 下一轮修改**。
-人只留在闭环外回答一个问题：「Desktop 有没有未保存的改动」。
-
-三个模式：
-
-| 模式 | 做什么 | 脚本 | 纯文本模型能用吗 |
-|---|---|---|---|
-| **Check** | 报告 Desktop 是否已过期——**磁盘上的文件有没有比运行中的实例更新**，外加 PID、版本、工作区 | `pbi-reload.ps1 -ListOnly` | ✅ |
-| **Reload** | 重启 Desktop 让它重读磁盘：关闭 → 重开 → 摆回窗口原位（你的环境启动时若弹登录框，顺手关掉；不弹则无感） | `pbi-reload.ps1 -Yes` | ✅ |
-| **Shot** | 把窗口截成 PNG，让 agent 直接看渲染结果 | `pbi-shot.ps1` | ❌ **需要视觉能力** |
-
-**Check 是重载的前置**——磁盘没变就不该重载，否则白等一次完整的模型加载。
-
-> ⚠️ **只有 Shot 依赖多模态模型。** 纯文本模型调了它会看不见图，
-> 却可能编造图里的内容——那比没有截图更糟。SKILL.md 里明确要求这种情况下
-> 交出文件路径让人去看，不许自行描述。
-
-以前每轮迭代人要做 6 件事：察觉 agent 改完 → 关 Desktop（并正确判断保存与否）→ 等加载
-→ 关登录弹窗（有的环境不弹，这步不存在）→ 窗口跳屏了拖回来 → 看结果并**用语言描述给 agent**。
-
-现在人只做第 1 件（在对话里答一句「无未保存改动」），2–5 由工具做，第 6 件 agent 自己做。
-
-## 做不到什么
-
-- **没有加快加载**。Desktop 加载大模型的时间一秒没省，那才是耗时大头
-- **agent 不能操作报表**：不能滚动、点击、切页。问题不在当前这屏就得人先导航过去
-- **没有把人从决策里拿掉**，而且是故意的：磁盘改动与内存未存改动方向相反，
-  工具从外部分不出来，只有人知道
-- 只解决「看」，不解决「改」报表层
-
-## 安装
-
-需要 Windows + PowerShell 5.1+，装了 Power BI Desktop。
+🔁 **Closes the loop** — the agent edits, reloads, looks, and goes again — unattended  
+🚦 **Checks before reloading** — no disk change, no reload; a wasted reload costs a full model load  
+👀 **Two ways to look** — PNG for vision models, UI Automation text for the rest  
+🪟 **Puts the window back** — same monitor, same placement; dismisses the sign-in dialog if it appears  
+🤝 **Safe with several agents** — finds its own instance by project name, never kills someone else's
 
 ```powershell
-git clone https://github.com/C-QY/pbi-check-loop.git
+irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/install.ps1 | iex
+```
+
+Restart Claude Code and it is live. [Full install notes ↓](#install)
+
+---
+
+## The Bigger Picture: Where the AI Workflow Breaks
+
+PBIP is the precondition for all of this. Storing a report as a **project** — plain text on
+disk, under version control — is what separates the **model layer** (M and DAX) from the
+**report layer** (prototype and visual implementation), and it is what makes any of it
+scriptable by an agent at all.
+
+Once you have that, an honest look at AI-assisted Power BI development shows four distinct
+jobs, at very different levels of maturity:
+
+| Layer | The work | Who verifies it | Loop status |
+|---|---|---|---|
+| **Structure** | Is the TMDL/PBIR valid? Fields bound, visuals on canvas? | Read the files back | ✅ automatable, long since |
+| **Numbers** | Does this measure return the right value? | ADOMD/DAX against the live model | ✅ **already a high-fidelity loop** |
+| **Refresh** | Does Desktop actually *see* what was written to disk? | — | ❌ **no such feature exists** |
+| **Visual** | Does the rendered page match the prototype? | — | ❌ **a human, every single time** |
+
+**The model layer has had a closed, high-fidelity loop for years.** Point ADOMD at the local
+Analysis Services instance, run DAX, compare the number to the source. The agent writes a
+measure, queries it, and knows whether it was right. No human required.
+
+**What was missing was everything downstream of the file write.** And it fails in two places.
+
+### 1. Power BI Desktop has no "reload from disk"
+
+This is the gap, stated plainly: **Power BI Desktop ships no way to re-read a PBIP project that
+changed on disk.** File → Save writes memory to disk. There is no command anywhere in the
+product for the opposite direction.
+
+Sync is one-way, and it is the wrong way for agentic work:
+
+| Direction | Command | Exists? |
+|---|---|---|
+| Memory → disk | File → Save | ✅ |
+| **Disk → memory** | **—** | ❌ **nothing** |
+
+That asymmetry was harmless when a human typed every measure into the UI: memory was always the
+newer copy. It becomes the central obstacle the moment an agent writes TMDL directly, because
+now **disk is the newer copy and Desktop cannot be told.** Worse, the one sync command that does
+exist actively destroys the work — pressing <kbd>Ctrl</kbd>+<kbd>S</kbd> at that moment
+**overwrites the new disk content with the stale in-memory model**.
+
+So the natural-language half of the workflow already works: you describe a change, the agent
+edits the semantic model on disk, correctly. And then it stops dead — because there is no
+supported way to make the running Desktop see it. The only recourse is closing and reopening the
+application by hand, every single iteration.
+
+**That is what this fills.** `pbi-reload.ps1` is the missing disk → memory direction: it
+terminates without saving (so the stale model can never win), cleans up the orphaned `msmdsrv`
+process, and reopens the same project with the same edition — restoring the window where it was.
+Not an official API, but the operation Desktop does not offer.
+
+### 2. The report layer emits pixels, not files
+
+An agent can write `visual.json` but cannot see what renders. Correct, misaligned, unreadable —
+all equally unknowable to it.
+
+The net effect of the two together is that **a human becomes the agent's eyes and hands**. Not
+out of habit — the loop was structurally open.
+
+> **Observability is not a loop.** Being able to take a screenshot is not the same as being
+> able to judge one — that is having `stdout` but no `assert`. A loop needs an oracle. See
+> [Loop 2](#loop-2--report-layer-iterating-toward-the-prototype).
+
+---
+
+## Loop 1 — Model Layer: Edit, Reload, Diagnose, Repeat
+
+This is the loop for semantic-model work: adding measures, editing relationships, reworking M.
+You describe the change in natural language, the agent edits the TMDL on disk — and then
+**Reload supplies the step Power BI itself does not have**, so the running Desktop picks it up.
+
+```
+       ┌─────────────────────────────────────────────────┐
+       │                                                 │
+   edit TMDL ──▶ Check ──▶ Reload ──▶ load ──▶ error? ───┤
+   on disk        │          │                   │       │
+                  │          │                   ▼       │
+            "no change?"  human OK'd         Shot -Text  │
+             stop here    "-Yes"             read it ────┘
+```
+
+**Where each piece fits:**
+
+- **Check** answers *did anything actually change on disk?* If not, stop — a needless reload
+  costs a full model load
+- **Reload** makes Desktop re-read the files. This is the step that used to be manual, every
+  single time
+- **Shot `-Text`** reads any error dialog **as text** rather than pixels. An agent that can read
+  `The column 'Amount' of the table wasn't found` verbatim can usually fix it and go around
+  again by itself
+
+That last point is what turns error handling into part of the loop rather than an interruption.
+Reading an error off an image is guesswork; reading it as a string is a diagnosis.
+
+> ⚠️ **The numbers still belong to ADOMD.** This skill tells you the model *loaded*; it does
+> not tell you the measure is *correct*. For that, query the live model with DAX — that loop
+> already worked and this one does not replace it.
+
+### Two classes of failure, handled in opposite ways
+
+Reopening a project you just edited is exactly when it breaks — and the first move is to
+classify, because the two classes want opposite things.
+
+| | **Class A — it will not open** | **Class B — a visual is broken** |
+|---|---|---|
+| Symptom | Modal error dialog, no project loaded | Report renders, one tile errors or is blank |
+| Loop state | **Severed** — nothing downstream runs | **Intact** — Reload and Shot still work |
+| Handling | Read the error, **close the instance**, fix on disk, reopen | Diagnose in place, **keep it open** |
+| Why | A broken instance holds the project and its `msmdsrv` child; the next reload has to fight both | Closing throws away a working loop for no reason |
+
+Class A is usually TMDL syntax, a reference to something that no longer exists, or an invalid
+relationship. Class B is usually a stale `queryRef` pointing at a renamed measure, or a single
+table that failed to load while everything else rendered fine.
+
+> ⚠️ **Not every bad edit produces a dialog.** A broken calculated table lets the project open
+> normally and fails silently — verified in testing. The absence of an error box is not proof
+> the edit was good: check that what you edited actually renders.
+
+---
+
+## Loop 2 — Report Layer: Iterating Toward the Prototype
+
+This is the part that was completely open, and it is the reason the project exists.
+
+**The prototype is not decoration. It is the test oracle.**
+
+An agent cannot answer *"does this look right?"* — that question has no ground truth it can
+reach. But it can answer *"does this match the prototype?"* — and that question is decidable
+from an image. Supplying a mockup converts an unanswerable question into an answerable one.
+
+```
+   prototype (the oracle)
+        │
+        ▼
+   write PBIR ──▶ Reload ──▶ Shot (PNG) ──▶ compare to prototype
+        ▲                                          │
+        │                                          ▼
+        └──────── still off? adjust ◀────── matches? done
+```
+
+So the workflow becomes: **design the prototype with a human, then let the agent converge on it
+unattended.** The human sets the target; the agent runs the laps.
+
+Two rules keep this honest, both enforced in `SKILL.md`:
+
+- **No oracle, no verdict.** With no prototype, the agent reports what it observes and lets you
+  judge. It must never invent a standard and then declare success against it
+- **Stop after two failed rounds.** If two edit → reload → shot cycles have not converged, it
+  stops and tells you what it sees. Each round costs a full model load, and a third rarely finds
+  what the first two missed
+
+---
+
+## What Stays Human, On Purpose
+
+Some parts of the loop are deliberately left open. Not because the tooling is immature —
+because closing them would be wrong:
+
+- **"Any unsaved changes in Desktop?"** — Two opposite situations exist and the tool **cannot
+  tell them apart from outside**:
+
+  | Situation | Correct action |
+  |---|---|
+  | TMDL on disk was edited, Desktop's memory is stale | Never save — it would overwrite the disk |
+  | Someone edited in Desktop without saving | Must save first — otherwise the kill discards it |
+
+  Desktop's title bar carries no modified marker and window enumeration exposes no dirty state.
+  **This is information asymmetry, not a capability gap.** So the script refuses to act without
+  `-Yes`, and that confirmation happens in conversation — never in a popup
+
+- **Business semantics.** Whether "revenue" excludes intercompany is not a question a screenshot
+  can settle
+- **The last mile of taste.** The agent can reach the prototype. Deciding the prototype was
+  right is yours
+
+---
+
+## Three Modes
+
+| Mode | Purpose | Command | Works without vision |
+|---|---|---|---|
+| **Check** | Are disk files newer than the running instance? Reports PID, edition, title | `pbi-reload.ps1 -ListOnly` | ✅ |
+| **Reload** | Terminate, clean up `msmdsrv`, reopen the same edition, restore the window | `pbi-reload.ps1 -Yes` | ✅ |
+| **Shot** | Window to PNG, or `-Text` for plain text via UI Automation | `pbi-shot.ps1` | ✅ with `-Text` |
+
+`-Text` is not a downgrade. It reaches dialog text, the table/field tree, and the report canvas
+itself — visual titles, matrix headers, cell values — through the embedded WebView's
+accessibility tree. It is often *more* precise than the image: a name the capture truncates to
+`SALES_DETAIL_BY_RE…` comes back whole. The real boundary is **semantics vs. presentation**:
+text tells you what the report *says*, only an image tells you how it *looks*.
+
+> ⚠️ **Only image mode needs vision.** A text-only model that calls it and then describes the
+> report is inventing content — worse than no capture at all. The skill requires such models to
+> use `-Text` or hand the path to a human.
+
+---
+
+## Preview
+
+**Check** — should we reload at all?
+
+```
+Current instance
+  PID       : 36292
+  Edition   : regular
+  Title     : Sales Analysis - Power BI Desktop
+  Started   : 07/30/2026 15:45:03
+
+Disk changed since Desktop opened - reload needed
+  15:07:50  measures.tmdl
+  14:55:27  relationships.tmdl
+```
+
+**Reload** — returns in ~2 s; a detached watcher finishes the job:
+
+```
+Restarting
+  Window rect recorded: -8,-8,2568,1400 (maximized)
+  Terminating Desktop (no save)...
+  Cleaning up orphaned msmdsrv 30512...
+  Reopening [regular] Sales Analysis.pbip ...
+  Watcher started (dismiss sign-in + restore window, 120s)
+```
+
+**Watcher log** — exits as soon as the work is done, not when the timeout expires:
+
+```
+[16:34:22] watch start pid=24868 timeout=120s
+[16:34:25] window settled L=-8 T=-8 2576x1408 maximized (still watching to 45s)
+[16:34:29] dismissed title='Sign in to Power BI'
+[16:35:07] restore done final L=-8 T=-8 2576x1408 target 2576x1408 -> OK
+[16:35:19] watch end (work done), dismissed 1
+```
+
+*(Real output; project names replaced.)*
+
+---
+
+## Install
+
+```powershell
+irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/install.ps1 | iex
+```
+
+Scripts land in `~\.claude\tools\`, the skill in `~\.claude\skills\pbi-check-loop\`. The
+installer verifies PowerShell syntax and UTF-8 BOM on every file it writes. Restart Claude Code
+to activate the skill. Run the same command again to update.
+
+<details>
+<summary>Manual install</summary>
+
+```powershell
+git clone https://github.com/C-QY/pbi-check-loop
 cd pbi-check-loop
 .\install.ps1
 ```
 
-装两样东西：
+Uninstall: `.\install.ps1 -Uninstall`
+</details>
 
-- `scripts\*.ps1` → `~\.claude\tools\`
-- `SKILL.md`（仓库根目录）→ `~\.claude\skills\pbi-check-loop\`
+**Several agents on one machine** (each on its own report): always pass `-Path`. The script
+matches the project name against window titles to find *your* instance, so it never touches
+another agent's Desktop; `-Id` is the fallback when no title matches.
+**Several agents on one report** is a different problem — two writers on the same TMDL/PBIR, a
+file-layer conflict this tool cannot serialize. Don't structure work that way.
 
-装完自检语法和 UTF-8 BOM。重启 Claude Code 后 skill 生效，agent 会在合适时机自动用它。
+---
 
-卸载：`.\install.ps1 -Uninstall`
+## What It Does Not Do
 
-## 用法
+- **It does not make loading faster.** Desktop's model load is untouched, and that remains the
+  dominant cost per iteration
+- **The agent cannot operate the report** — no scrolling, clicking, or page switching. If the
+  problem is not on the current screen, a human has to navigate there first
+- **It does not verify numbers.** That is ADOMD's job, and that loop already existed
+- It closes the loop on *seeing* the report layer, not on *judging* it — that needs the oracle
 
-```powershell
-& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -ListOnly       # 只看状态
-& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Yes            # 重载
-& "$env:USERPROFILE\.claude\tools\pbi-shot.ps1"  -Out shot.png    # 截窗口
-```
+---
 
-### ⚠️ `-Yes` 是什么意思
+## Design Principles
 
-它表示**已经跟人确认过「Desktop 里没有未保存的改动」**。不给这个参数，脚本只打印警告不动手。
+**Fast · Lightweight · Universal** — the scripts collect metadata only, never file content.
 
-因为有两种方向相反的情况，工具从外部分不出来：
+| Layer | Content | Token cost |
+|---|---|---|
+| L1 | `SKILL.md` frontmatter | ~255 tokens per session, used or not |
+| L2 | `SKILL.md` body | ~1900 tokens, loaded only when triggered |
+| L3 | `scripts/*.ps1` | Executed, never read — zero tokens |
 
-| 情况 | 正确做法 |
+---
+
+## Beyond Power BI
+
+> Any GUI development tool that ① keeps its state in memory rather than on disk and ② produces
+> visual rather than textual output severs an agent's feedback loop the same way.
+> The fix is the same two moves: **mechanize the state refresh**, and **open a viewing channel**.
+
+Nothing here is specific to Power BI. Figma, Unity, CAD, any IDE plugin — same shape, same gap.
+
+---
+
+## An Honest Note
+
+These two scripts are a few hundred lines of PowerShell and contain **no clever code**. The time
+went into the empirical findings — the sign-in dialog appears on an 11-second delay, the watcher
+must be detached or it dies with the calling session, `IsZoomed` returns `True` for a window that
+was never actually expanded. **Anyone rebuilding this hits the same walls.**
+
+The value is in the eleven findings in [`docs/FINDINGS.md`](docs/FINDINGS.md), not the code.
+
+---
+
+## Requirements
+
+| Platform | Status |
 |---|---|
-| 磁盘 TMDL 被改过、Desktop 内存是旧的 | 绝不能保存（会覆盖磁盘改动） |
-| 人刚在 Desktop 里改了还没存 | 必须先保存（否则杀掉就没了） |
+| Windows | ✅ PowerShell 5.1+, Power BI Desktop installed, a `.pbip` project |
+| macOS / Linux | ❌ Power BI Desktop does not exist there — nothing to support |
 
-Desktop 标题栏不带修改标记，枚举窗口也拿不到脏状态——**只有人知道**。所以确认这一步不能省，
-也不该由脚本弹框去问（那是打扰），应该发生在对话里。
+## License
 
-> **多 agent 共用一台机器时**（各改各的项目）：始终显式传 `-Path`——脚本按项目名匹配窗口
-> 标题，自动定位你的实例，不会动到别的 agent 的 Desktop；标题匹配不到时才需要 `-Id`。
-> `pbi-reload.last.json` 是一机一份的共享状态，不传 `-Path` 就可能用到别人记的路径。
-> **多个 agent 改同一个项目**则是另一回事——冲突在文件层（同一批 TMDL/PBIR 被两方同时写），
-> 这个工具管不了，别这么安排分工。
-
-## 可推广的部分
-
-> 任何 GUI 开发工具，只要它 ①把状态存在自己内存里而非磁盘、②产出是视觉而非文本，
-> 就会以同样的方式掐断 agent 的反馈闭环。
-> 补法是固定的两招：**把状态刷新机械化**，**给 agent 开一条截屏通道**。
-
-这跟 PBI 无关，换成 Figma、Unity、CAD、任何 IDE 插件都成立。
-
-## 一句更诚实的
-
-这两个脚本加起来六百多行 PowerShell，**本身没有技术含量**。真正花时间的是那些实证——
-登录弹窗延迟 11 秒才出现、守候进程必须独立否则随会话死、`IsZoomed` 返回 True 时窗口可能
-根本没撑开……**任何人重做一遍都会踩同样的坑**。
-
-价值在 [`docs/FINDINGS.md`](docs/FINDINGS.md) 那 11 条实证记录，不在代码。
+MIT

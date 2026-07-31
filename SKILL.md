@@ -1,97 +1,144 @@
 ---
 name: pbi-check-loop
 description: >-
-  Closes the feedback loop that breaks when an AI develops Power BI reports, so the model iterates
-  by itself instead of a human repeatedly closing, reopening and eye-checking Desktop after every
-  edit. Checks whether files on disk are newer than the running instance. Reloads Desktop so it
-  re-reads changed TMDL and PBIR, restoring window placement and dismissing the sign-in dialog
-  when the environment shows one (signed-in users never see it).
-  Captures the window as a PNG, or with -Text reads it through UI Automation as plain text so a
-  model without vision works too. Use when editing TMDL, measures or PBIR; when the user says
-  “重开一下 Desktop”, “让 Desktop 重新读盘”, “重载一下”, “reload pbi”; on “Desktop 是最新的吗”, “需要重载吗”, “check pbi state”;
-  on “看看现在报表”, “截个图”, “show me the report”; or whenever the user reports an error or rendering problem.
-  Runs Check before any Reload. Windows and PowerShell only.
+  Restarts Power BI Desktop so it re-reads TMDL/PBIR edited on disk, and captures its window
+  so a model can see what rendered - closing the verify loop Power BI breaks by holding the
+  model in memory and emitting pixels, not files.
+  Requires a .pbip project.
+  Check: are disk files newer than the running instance? Changes nothing.
+  Reload: terminate without saving, reopen the same edition, restore the window, dismiss the
+  sign-in dialog if shown.
+  Shot: window to PNG, or -Text to read it via UI Automation for models without vision.
+  Trigger - after writing any .tmdl, .pbir, visual.json, measure or theme file.
+  Trigger - reload: "reload pbi", "restart power bi desktop", "重开一下 Desktop".
+  Trigger - check: "is desktop up to date", "Desktop 是最新的吗", "需要重载吗".
+  Trigger - shot: "screenshot the report", "show me the report", "看看现在报表", "截个图".
+  Trigger - diagnose (AUTO): a broken visual, blank page, or an error dialog is reported.
+  Do NOT use for Power BI Service or DAX correctness questions.
+  Run Check before Reload. Windows only.
 
 version: 1.0.0
 license: MIT
 allowed-tools: [PowerShell, Read]
 ---
 
-## Why this exists
-
-Agentic development works because the model can **verify its own work**. Power BI severs that
-loop in two places:
-
-1. **The model layer has two sources of truth.** TMDL lives on disk; Desktop holds a separate
-   in-memory copy. Your edits are invisible to it — and if the user presses
-   <kbd>Ctrl</kbd>+<kbd>S</kbd> then, **the stale model overwrites your disk changes**.
-2. **The report layer emits pixels, not files.** You can write `visual.json` but cannot see
-   what rendered.
-
 ## Workflow
 
-### Step 1 — Pick the mode
+**Step 1 — Pick the mode**
 
 | Situation | Mode | Section |
 |---|---|---|
-| Need to know if Desktop is stale / which instance is running | **Check** | Step 2 |
-| Disk was changed and the user must see the effect | **Reload** | Step 3 |
-| Need to see what rendered, or diagnose a reported error | **Shot** | Step 4 |
+| Is Desktop stale? Which instance is running? | Check | Step 2 |
+| Disk changed and the result must be seen | Reload | Step 3 |
+| The reload produced an error | Diagnose | Step 4 |
+| Need to see what rendered | Shot | Step 5 |
 
-**Always run Check before Reload.** If it reports no disk change, say so and stop — a reload
-costs the user a full model load for nothing.
+Always run Check before Reload. If Check reports no disk change, say so and stop — a reload
+costs a full model load for nothing.
 
-### Step 2 — Check
+**Step 2 — Check**
 
 ```powershell
 & "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -ListOnly
 ```
 
-Changes nothing. Reports: PID, edition (regular vs. Report Server), window title, start time,
-associated `msmdsrv` PID, and **whether any `*.tmdl / *.json / *.pbir / *.pbism` under the
-project is newer than the running instance**.
+Changes nothing. Reports PID, edition (regular vs. Report Server), window title, start time,
+the associated `msmdsrv` PID, and whether any `*.tmdl / *.json / *.pbir / *.pbism` under the
+project is newer than the running instance. That last line is the decision.
 
-That last line is the decision: *newer on disk* → reload is warranted; *no change* → it is not.
+**Step 3 — Reload**
 
-### Step 3 — Reload
-
-**Before calling, ask the user in conversation: "Desktop 里有没有未保存的改动？"**
-Pass `-Yes` only after they answer no. See [Rules](#rules) for why this cannot be skipped.
+Ask in conversation first: **"Any unsaved changes in Desktop?"** Pass `-Yes` only after the
+answer is no. See [Rules](#rules) — this cannot be skipped.
 
 ```powershell
-& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Yes                  # path remembered
-& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Path "...\x.pbip" -Yes   # first run
+& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Path "...\project.pbip" -Yes
 ```
-
-`Stop-Process` (no save, no dialog) → clean up `msmdsrv` → reopen with **the same edition**,
-auto-detected → a detached watcher restores window placement and, if your environment shows a
-sign-in dialog at launch, dismisses it (some environments never show one; that branch simply
-does nothing).
-Returns in ~2 s; the watcher continues in the background.
 
 | Parameter | Meaning |
 |---|---|
-| `-Path` | `.pbip` path, remembered in `pbi-reload.last.json` |
+| `-Path` | `.pbip` path. Remembered in `pbi-reload.last.json`. Always pass it explicitly |
 | `-Yes` | Asserts the user confirmed no unsaved changes. Without it the script only warns |
-| `-Id` | Which instance to restart when several run |
-| `-ListOnly` | Check mode (Step 2) |
+| `-Id` | Which instance, when the title match is ambiguous |
+| `-ListOnly` | Check mode |
 | `-NoDismiss` | Leave the sign-in dialog alone |
 | `-DismissTimeout` | Watcher lifetime, default 120 s |
 
-Then **wait for the load to finish** before capturing — a large model takes tens of seconds.
-The main window title reads `无标题 - Power BI Desktop` while loading and becomes the project
-name when done.
+Returns in ~2 s; a detached watcher keeps working in the background. Then **wait for the load
+to finish** before doing anything else — a large model takes tens of seconds. The window title
+reads `Untitled - Power BI Desktop` (localized) while loading and becomes the project name when
+done.
 
-### Step 4 — Shot
+**Step 4 — Diagnose a failed reload**
+
+Reopening a project you just edited is exactly when it breaks. **First classify the failure —
+the two classes need opposite handling.**
+
+**4a. Wait for the load to settle before judging anything.** A missing window or an empty canvas
+usually means *still loading*, not *failed*. Only conclude failure once the title has settled
+from `Untitled - Power BI Desktop` to the project name.
+
+```powershell
+& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -ListOnly
+```
+
+**4b. Classify.**
+
+| | **Class A — the project will not open** | **Class B — it opened, a visual is broken** |
+|---|---|---|
+| Symptom | Modal error dialog; no project loaded; title never settles | Title settles, report renders, but a visual shows an error or is blank |
+| Layer | Model / project file | Report layer, or one table in the model |
+| Loop state | **Broken** — nothing downstream can run | Intact — Reload and Shot both still work |
+| Detect with | `-Text` (the dialog is the whole story) | `-Text` for a message, image for a blank tile |
+
+**4c. Class A — read, close, fix, reopen.** In that order, and do not skip the close.
+
+```powershell
+& "$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Text          # 1. read the dialog verbatim
+Stop-Process -Name PBIDesktop -Force                            # 2. close the broken instance
+#                                                                 3. fix the file on disk
+& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Path "..." -Yes   # 4. reopen
+```
+
+**Never leave a broken instance running while editing.** It holds the project, its `msmdsrv`
+child lingers, and the next reload has to fight both. Read the error, close it, then fix.
+
+| Class A error mentions | Fix |
+|---|---|
+| TMDL syntax, unexpected token, a line/column number | Re-read the file you wrote — usually indentation or a stray quote |
+| A column, table or measure "not found" / cannot be resolved | The reference does not exist, or you renamed one end of it |
+| A relationship invalid, circular or ambiguous | Your new relationship conflicts with an existing one |
+| A property not defined / schema does not allow it | Wrong schema version for this edition — remove the offending property |
+| Credentials, sign-in, gateway, cannot connect, timeout | **Environment, not your edit. Stop and tell the user** |
+| File locked, in use, access denied | Another instance holds it — find it, ask which to close |
+
+**4d. Class B — the loop still works, so use it.** The project is open; keep it open. A broken
+visual is diagnosed in place, one round of the normal loop per attempt.
+
+- `-Text` first: a visual error message is real text and reads exactly
+- If the tile is simply blank with no message, capture the image — blankness is visual, not textual
+- Then read back the `visual.json` you wrote. Common causes: a `queryRef` pointing at a renamed
+  measure, a stale `stylePreset`, a field that no longer exists, a tile positioned off-canvas
+- A table that failed to load shows up here too — one visual empty while its neighbours render
+  usually means that table, not that visual
+
+⚠️ **Not every bad edit produces a dialog.** A broken calculated table lets the project open
+normally and fails silently — verified. Absence of a dialog is not proof the edit was good;
+check that what you edited actually renders.
+
+**4e. Look before guessing.** If the project is in git, `git diff` on the files you touched
+beats re-deriving intent from an error message. After two failed attempts, revert to a working
+state and reapply the change in smaller pieces.
+
+🔴 **Never "fix" an error by having the user save from Desktop.** Desktop holds the pre-edit
+model; saving would overwrite the very edit you are trying to repair.
+
+**Step 5 — Shot**
 
 ```powershell
 & "$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Out "<scratch>\pbi.png"   # image
 & "$env:USERPROFILE\.claude\tools\pbi-shot.ps1" -Text                      # plain text
 ```
-
-Image mode uses `PrintWindow`, capturing non-foreground and even occluded windows without
-stealing focus; read the PNG with the Read tool. **If a dialog is open, its text is printed
-automatically alongside the image** — an error read as text beats reading it off pixels.
 
 | Parameter | Meaning |
 |---|---|
@@ -100,108 +147,108 @@ automatically alongside the image** — an error read as text beats reading it o
 | `-Id` | Which instance, when several run |
 | `-FullScreen` | All monitors instead of the window — privacy-sensitive, avoid by default |
 
-**Pick the channel by what you are asking:**
+Image mode uses `PrintWindow`: it captures non-foreground and occluded windows without stealing
+focus. Read the PNG with the Read tool. When a dialog is open its text is printed automatically
+alongside the image.
+
+Pick the channel by the question:
 
 | Question | Use |
 |---|---|
 | What does this error say? | `-Text` |
-| Which visuals are on the page, with what columns? What value is in this cell? | `-Text` |
+| Which visuals are on the page? What value is in this cell? | `-Text` |
 | Which tables and relationships exist? | `-Text` |
+| Layout, colours, spacing — does it match the mockup? | image + vision |
 | Do the numbers tie out? | ADOMD DAX against the live model (not this skill) |
 | Are fields bound / visuals off-canvas? | read back the PBIR JSON you just wrote |
-| **Layout, colours, spacing — does it match the mockup?** | **image + vision** |
 
-The boundary is **semantics vs. presentation**: text gives what the report *says*, only an image
-gives how it *looks*. Text is sometimes the more precise of the two — a name the capture
-truncated to `PUR_DAILY_STOCK_DE…` comes back whole as `PUR_DAILY_STOCK_DETAIL`.
+Text gives what the report *says*; only an image gives how it *looks*. Text is sometimes more
+precise — a name truncated to `SALES_DETAIL_BY_RE…` in the capture comes back whole in text.
 
-🔴 **If you cannot read images, never call image mode and then describe the report** — you would
-be inventing content. Use `-Text`, or hand the PNG path to the user and ask what they see.
+**Step 6 — Report back**
 
-🔴 **`-Text` output is business data** — real material codes, company names, amounts. Handle it
-exactly like a capture: never publish, never commit, quote only what the question needs.
+Use the matching template. Do not narrate the mechanics.
 
-### Step 5 — Report back
-
-Keep it to the shape below. Do not narrate the mechanics.
-
-**Check:**
+### Check — English
 ```
-Desktop  PID {pid} · {edition} · {title}
-磁盘     {已变更，{N} 个文件 / 无变更}
-结论     {建议重载 / 不用重载}
+Desktop   PID {pid} · {edition} · {title}
+Disk      {changed, N files / no changes}
+Verdict   {reload recommended / no reload needed}
 ```
 
-**Reload:** state the outcome in one line, then what you observed — window landed where,
-dialog dismissed or not. Quote the watcher log only if something went wrong.
+### Check — Chinese
+```
+Desktop   PID {pid} · {edition} · {title}
+磁盘      {已变更，{N} 个文件 / 无变更}
+结论      {建议重载 / 不用重载}
+```
 
-**Shot:** describe what the image actually shows and answer the user's question from it.
-Do not dump the whole screen contents.
+**Reload:** one line for the outcome, then what was observed — where the window landed, whether
+a dialog was dismissed. Quote the watcher log only when something went wrong.
+
+**Diagnose:** quote the error text verbatim, name which of your edits caused it, and state the
+fix. If it is environmental (credentials, gateway, lock), say so plainly and stop — do not
+attempt a fix you cannot make.
+
+**Shot:** describe what the image actually shows and answer the question from it. Do not
+transcribe the whole screen.
 
 ## Rules
 
-**Ask before every reload.** Two opposite situations exist and the tool **cannot tell them
-apart from outside** — Desktop's title bar carries no modified marker and window enumeration
-exposes no dirty state:
+- **Ask before every reload.** Two opposite situations exist and the tool cannot tell them apart:
 
-| Situation | Correct action |
-|---|---|
-| Disk TMDL was edited, Desktop memory is stale | Never save — saving overwrites the disk edits |
-| User just edited in Desktop without saving | Must save first — otherwise the kill discards it |
+  | Situation | Correct action |
+  |---|---|
+  | Disk TMDL edited, Desktop memory stale | Never save — saving overwrites the disk edits |
+  | User edited in Desktop without saving | Must save first — otherwise the kill discards it |
 
-⚠️ **Do not assume "the user never edits in Desktop."** That assumption was empirically
-falsified — polishing the report layer is the user's job by design.
-
-**Compare against something.** A capture on its own is not a verdict. If a prototype or
-mockup exists, compare to it and name the differences. If none exists, report what you observe
-and let the user judge — do not invent a standard.
-
-**Stop after two failed rounds.** If two edit → reload → shot cycles have not converged, stop
-and tell the user what you tried and what you are seeing. Iterating further burns a full model
-load each time and rarely finds a problem the third pass will.
-
-**Do NOT read the scripts into context — execute them.** They are a few hundred lines each.
-This document states everything needed to call them. Read the source only to modify it.
-
-**Treat captures as confidential.** A Power BI window shows live business data —
-revenue, supplier names, part numbers, customers. Therefore:
-
-- Write captures to a temporary/scratch path, never into the user's project or a git repo
-- Never publish one to an artifact, a web page, or any external service
-- Quote only the values the question requires; do not transcribe the screen
-- Error dialogs may expose connection strings, server names, or credentials —
-  never echo those verbatim and never commit them
-
-**Do NOT expose secrets, tokens, or passwords** found in config files, logs, or captures.
-
-**Be proactive.** After editing TMDL, offer the reload yourself; do not wait to be asked.
-
-**Several agents, one machine.** `pbi-reload.last.json` (the remembered path) is shared across
-every user of the tool, so always pass `-Path` explicitly: your instance is then identified by
-matching the project name against window titles, and you cannot kill another agent's instance.
-`-Id` remains the fallback when no title matches. **Several agents on ONE report is a different
-problem** — the conflict lives at the file layer (two writers on the same TMDL/PBIR), which this
-tool cannot serialize. Don't do it.
-
-**Match the user's language.** Chinese in, Chinese out.
+  Desktop's title bar carries no modified marker and window enumeration exposes no dirty state.
+  Only the user knows. Never assume "the user does not edit in Desktop" — polishing the report
+  layer is their job by design.
+- **Always pass `-Path`.** The target instance is then identified by matching the project name
+  against window titles, so another agent's Desktop is never killed. `pbi-reload.last.json` is
+  shared machine-wide; without `-Path` you may inherit someone else's project.
+- **Never run two agents against one report.** The conflict is at the file layer — two writers
+  on the same TMDL/PBIR — which this tool cannot serialize.
+- **Compare against something.** A capture alone is not a verdict. Compare to the prototype or
+  mockup and name the differences; with no oracle, report what you observe and let the user judge.
+- **Stop after two failed rounds.** If two edit → reload → shot cycles have not converged, stop
+  and report what you tried. Each further round burns a full model load.
+- **Execute the scripts, do not read them into context.** This document states everything needed
+  to call them. Read the source only to modify it.
+- **Treat captures and `-Text` output as confidential** — they contain live business data:
+  revenue, supplier names, part numbers, customers.
+  - Write captures to a scratch path, never into the user's project or a git repo
+  - Never publish one to an artifact, a web page, or any external service
+  - Quote only the values the question requires
+  - Error dialogs may expose connection strings, server names or credentials — never echo those
+- **Never expose secrets, tokens or passwords** found in config files, logs or captures.
+- **If you cannot read images, never call image mode and then describe the report** — that is
+  inventing content. Use `-Text`, or hand the PNG path to the user.
+- **Be proactive.** After editing TMDL, offer the reload; do not wait to be asked.
+- **Match the user's language.** Chinese in, Chinese out.
 
 ## Failure handling
 
-| Symptom | Meaning | Do this |
+| Message | Meaning | Do this |
 |---|---|---|
-| `Power BI Desktop 未运行` | Nothing to reload | Ask whether to open the project, or just open it with `-Path` |
-| `发现多个 Desktop 实例` | Several instances | Show the listed PIDs and editions, ask which, pass `-Id` |
-| `没有可用路径` | No `-Path` and nothing remembered | Ask for the `.pbip` path |
-| `已停下，什么都没动` | `-Yes` was omitted | Correct behaviour — confirm with the user first, then retry |
-| Shot warns `PrintWindow 失败，已回退` | Captured raw screen pixels | The image may show an occluding window — say so rather than trusting it |
-| `找不到 PBIDesktop 主窗口` | Still loading | Wait and retry; do not conclude the reload failed |
-| Watcher log shows `守窗结束 … 不符` | Window restore did not settle | Report it; the reload itself still succeeded |
+| `Power BI Desktop is not running` | Nothing to reload | Ask whether to open the project, or open it with `-Path` |
+| `Several Desktop instances found` | Title match was ambiguous | Show the listed PIDs and editions, ask which, pass `-Id` |
+| `No path available` | No `-Path`, nothing remembered | Ask for the `.pbip` path |
+| `Stopped. Nothing was changed.` | `-Yes` was omitted | Correct behaviour — confirm with the user, then retry |
+| `WARNING: the running instance is '…' which does not match -Path` | Another project's Desktop | Stop and confirm before proceeding |
+| `Recorded window rect looks wrong` | Window was minimized or off-screen | Expected; it reopens at the default position |
+| `PrintWindow failed; fell back to CopyFromScreen` | Raw screen pixels captured | Another window may occlude it — say so rather than trusting the image |
+| `PBIDesktop main window not found` | Still loading | Wait and retry; do not conclude the reload failed |
+| Watcher log shows `restore done … MISMATCH` | Window restore did not settle | Report it; the reload itself still succeeded |
+| Desktop reopens but shows an error dialog | Class A — usually your own edit | Step 4c: read with `-Text`, close, fix, reopen |
+| Opens fine but one visual errors or is blank | Class B — report layer or one table | Step 4d: diagnose in place, keep it open |
+| Desktop reopens with an empty canvas | Almost always still loading | Wait, re-check the title; only then treat as failure |
 
 Watcher log: `~\.claude\tools\pbi-reload.dialogs.log`. Read it only when diagnosing.
 
 ## Maintaining these scripts
 
-Eleven empirically discovered pitfalls (dialog timing, detached watcher, `IsZoomed` lying about
-maximized state, verifying too early, BOM requirements) and the unresolved sign-in-dialog root
-cause live in [`docs/FINDINGS.md`](docs/FINDINGS.md). **Read it only if you are modifying the
-scripts** — calling them does not require it.
+Empirically discovered pitfalls — dialog timing, the detached watcher, `IsZoomed` lying about
+maximized state, verifying too early, BOM requirements — live in
+[`docs/FINDINGS.md`](docs/FINDINGS.md). Read it only when modifying the scripts.
