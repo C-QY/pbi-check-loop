@@ -10,7 +10,7 @@
 
 ## ✨ What It Does
 
-🔁 **Closes the loop** — the agent edits, reloads, looks, and goes again — unattended  
+🔁 **The agent fixes its own mistakes** — writes TMDL, reloads, reads the error as text, corrects it, goes again  
 🚦 **Checks before reloading** — no disk change, no reload; a wasted reload costs a full model load  
 👀 **Two ways to look** — PNG for vision models, UI Automation text for the rest  
 🪟 **Puts the window back** — same monitor, same placement; dismisses the sign-in dialog if it appears  
@@ -71,10 +71,39 @@ edits the semantic model on disk, correctly. And then it stops dead — because 
 supported way to make the running Desktop see it. The only recourse is closing and reopening the
 application by hand, every single iteration.
 
-**That is what this fills.** `pbi-reload.ps1` is the missing disk → memory direction: it
+**That is what this fills.** `pbi-reload.ps1` supplies the missing disk → memory direction: it
 terminates without saving (so the stale model can never win), cleans up the orphaned `msmdsrv`
 process, and reopens the same project with the same edition — restoring the window where it was.
-Not an official API, but the operation Desktop does not offer.
+
+To be precise about the mechanism: this is a **restart, not a hot reload**. The window does
+close; what changes is that closing and reopening are no longer a human's job. Each round still
+costs a full model load, which remains the dominant expense per iteration.
+
+#### The alternative: write to the live model instead
+
+There *is* a way to change a running model without restarting anything. TOM, connected to the
+local Analysis Services instance, writes model metadata directly — this is what the entire
+external-tool ecosystem is built on. It is genuinely faster, and worth knowing precisely what it
+does and does not cover:
+
+| | Hot write via TOM | Effect |
+|---|---|---|
+| **DAX measures** | ✅ | Fully live — measures are evaluated at query time, so the next query uses the new definition |
+| **Power Query / M** | ⚠️ | The definition changes, but already-loaded data does not re-materialize until a refresh |
+| **Report layer** (PBIR, `visual.json`) | ❌ | No live-write API exists at all — layout and visuals are files, only ever files |
+
+So hot-writing works, and for pure DAX work it is the quicker path. **The reason this project
+takes the slower one is version control.**
+
+TOM writes into the memory of a running process. Until someone saves, **nothing exists on disk**:
+no diff to review, no commit to revert to, no branch, no pull request. Version control does not
+become impossible, but it degrades from being the medium of change to being a record made
+afterwards — hot-write, then save, then commit, with that middle step a manual action inside
+Desktop. Two people hot-writing the same instance is last-write-wins, with no conflict to detect.
+
+That is the actual trade. A full model load per round buys a workflow where **every change is a
+reviewable text diff before it is ever applied** — and where the report layer, which has no hot
+path at all, works the same way as the model layer instead of needing a second workflow.
 
 ### 2. The report layer emits pixels, not files
 
@@ -395,13 +424,29 @@ file-layer conflict this tool cannot serialize. Don't structure work that way.
 
 ---
 
-## Beyond Power BI
+## What This Actually Is
 
-> Any GUI development tool that ① keeps its state in memory rather than on disk and ② produces
-> visual rather than textual output severs an agent's feedback loop the same way.
-> The fix is the same two moves: **mechanize the state refresh**, and **open a viewing channel**.
+Stated as narrowly as it can honestly be stated: **this automates the stretch between "the agent
+edited the file" and "the agent can see what that did."**
 
-Nothing here is specific to Power BI. Figma, Unity, CAD, any IDE plugin — same shape, same gap.
+That framing is deliberately small, and it is the reason two short scripts are enough. The gap
+was never wide — editing already worked, judging already worked. Only the segment in the middle
+had nothing in it, and it happened to sit where every iteration must pass.
+
+In practice that means one thing above all: **an agent that edits TMDL can now recover from its
+own mistakes.** Write a measure, reload, read the error as text, fix it, go again — without a
+human relaying what the screen said. Everything else here is in service of that.
+
+### A guess, offered as a guess
+
+The same shape may exist elsewhere. A GUI tool that keeps state in memory rather than on disk,
+emits pixels rather than files, and assumes edits happen *inside the application* would break an
+agent's loop the same way once that agent starts editing its files from outside. The fix would
+presumably be the same two moves — mechanize the state refresh, open a viewing channel.
+
+**But that is a conjecture from a single case.** Power BI is the one instance I have actually
+worked through; I have not verified it against Figma, Unity, or anything else. Treat it as a
+hypothesis worth testing, not a finding.
 
 ---
 
