@@ -57,21 +57,11 @@ Write-Host "`nInstalling pbi-check-loop"
 
 if ($PSVersionTable.PSVersion.Major -lt 5) { throw "PowerShell 5.1 or newer required; found $($PSVersionTable.PSVersion)" }
 
-# One-line install: irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/install.ps1 | iex
-# Piped into iex there are no repo files alongside this script ($PSScriptRoot is empty),
-# so clone to a temp directory first and run the real install from there.
-if (-not $src -or -not (Test-Path (Join-Path $src 'scripts\pbi-reload.ps1'))) {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        throw "git is required for the one-line install. Install git, or clone the repo and run .\install.ps1 manually."
-    }
-    $tmp = Join-Path $env:TEMP 'pbi-check-loop-install'
-    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-    Say "Cloning the repository..."
-    git clone --depth 1 https://github.com/C-QY/pbi-check-loop $tmp 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Clone failed. Check your network, or clone manually and run .\install.ps1." }
-    & (Join-Path $tmp 'install.ps1') -ToolsDir $ToolsDir -SkillsDir $SkillsDir
-    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-    return
+# This script runs from a checkout. The one-line install goes through get.ps1, which
+# downloads the repo first - `iex` evaluates an expression and cannot execute a file
+# that declares [CmdletBinding()] and param().
+if (-not $src) {
+    throw "Run this from a cloned repository, or use: irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex"
 }
 
 $missing = @($scripts | Where-Object { -not (Test-Path (Join-Path $src "scripts\$_")) })

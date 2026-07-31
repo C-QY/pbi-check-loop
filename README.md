@@ -17,7 +17,7 @@
 🤝 **Safe with several agents** — finds its own instance by project name, never kills someone else's
 
 ```powershell
-irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 ```
 
 Restart Claude Code and it is live. [Full install notes ↓](#install)
@@ -374,7 +374,7 @@ Restarting
 ## Install
 
 ```powershell
-irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 ```
 
 Scripts land in `~\.claude\tools\`, the skill in `~\.claude\skills\pbi-check-loop\`. The

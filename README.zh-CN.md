@@ -19,7 +19,7 @@
 ---
 
 ```powershell
-irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 ```
 
 装完重启 Claude Code 即可生效。[完整安装说明 ↓](#安装)
@@ -342,7 +342,7 @@ Reload 的不对称很关键：**每次都问**等于把人重新塞回内环—
 ## 安装
 
 ```powershell
-irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 ```
 
 脚本装到 `~\.claude\tools\`，skill 装到 `~\.claude\skills\pbi-check-loop\`。
