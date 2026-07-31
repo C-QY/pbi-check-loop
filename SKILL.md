@@ -1,19 +1,20 @@
 ---
 name: pbi-check-loop
 description: >-
-  Restarts Power BI Desktop so it re-reads TMDL/PBIR edited on disk, and captures its window
-  so a model can see what rendered - closing the verify loop Power BI breaks by holding the
-  model in memory and emitting pixels, not files. Needs a .pbip project.
-  Check: are disk files newer than the running instance? Reload: terminate without saving and
-  reopen. Shot: window to PNG, or -Text via UI Automation for models without vision.
-  Trigger - ALWAYS after writing any .tmdl, .pbir, visual.json or theme file: run Check, then
-  reload. Do not wait to be asked.
+  Closes the verify loop for Power BI Desktop development: reloads a .pbip so Desktop re-reads
+  TMDL/PBIR changed on disk, and captures the window so a model can see what rendered. Power BI
+  has no reload command of its own.
+  Use whenever working on a .pbip project - editing measures, TMDL, relationships, M,
+  visual.json, PBIR or themes. Such edits stay invisible to the running Desktop until reloaded,
+  so the edit is not finished until this runs.
+  Trigger - after ANY edit to a project file: run Check unasked, then reload if it changed. A
+  reload discards unsaved work in Desktop - confirm once per session, not each time.
   Trigger - reload: "reload pbi", "restart power bi desktop", "重开一下 Desktop", "重载一下".
   Trigger - check: "is desktop up to date", "Desktop 是最新的吗", "需要重载吗".
   Trigger - shot: "screenshot the report", "看看现在报表", "截个图".
-  Trigger - iterate unattended: "match the mockup", "keep going until it matches", "照着原型图做".
-  Trigger - diagnose (AUTO): a broken visual, blank page, or an error dialog appears.
-  Do NOT use for Power BI Service or DAX correctness. Windows only.
+  Trigger - iterate: "match the mockup", "照着原型图做", "改到跟原型一致".
+  Trigger - diagnose (AUTO): a broken visual, blank page, or an error dialog.
+  Not for Power BI Service or DAX. Windows only.
 
 version: 1.0.0
 license: MIT

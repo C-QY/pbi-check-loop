@@ -217,6 +217,32 @@ the agent to act on its own, graded by what each action can destroy:
 | **Shot** | none — read-only | Runs whenever the agent needs to see the result. Never asks |
 | **Reload** | high — terminates Desktop without saving | Consent **once per session**, then announce and proceed |
 
+Both halves live in the skill's `description` — the part every session preloads — not only in
+its body. A preloaded instruction to act autonomously, paired with a safety condition that
+loads later, is just an instruction to act unsafely.
+
+### Making sure it actually gets used
+
+An installed skill is selected by matching its description against what you asked for. That is
+the weak point here: when you say *"change this measure to exclude group purchases"*, nothing in
+that sentence mentions reloading or Desktop. The agent can finish the edit and consider the task
+done — with the change sitting on disk, invisible.
+
+The description is therefore written around **working on a `.pbip` at all**, not around the word
+"reload", and it states plainly that *an edit is not finished until the reload runs*.
+
+For a project you work on daily, make it a standing rule. One line in the repository's
+`CLAUDE.md` is more reliable than any phrasing in a description:
+
+```markdown
+After editing any .tmdl / .pbir / visual.json, reload with pbi-check-loop before
+reporting the task complete. A disk change that Desktop has not re-read is not done.
+```
+
+A `PostToolUse` hook could enforce this mechanically, but it fires on every edit — including
+files that have nothing to do with Power BI — and removes the agent's judgement entirely. The
+standing rule gets most of the reliability at none of that cost.
+
 The reload asymmetry matters. Asking every single time would put the human back in the inner
 loop — the exact cost this project exists to remove. Asking *never* would gamble with unsaved
 work. So consent is taken once, up front:
