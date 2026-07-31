@@ -3,19 +3,17 @@ name: pbi-check-loop
 description: >-
   Restarts Power BI Desktop so it re-reads TMDL/PBIR edited on disk, and captures its window
   so a model can see what rendered - closing the verify loop Power BI breaks by holding the
-  model in memory and emitting pixels, not files.
-  Requires a .pbip project.
-  Check: are disk files newer than the running instance? Changes nothing.
-  Reload: terminate without saving, reopen the same edition, restore the window, dismiss the
-  sign-in dialog if shown.
-  Shot: window to PNG, or -Text to read it via UI Automation for models without vision.
-  Trigger - after writing any .tmdl, .pbir, visual.json, measure or theme file.
-  Trigger - reload: "reload pbi", "restart power bi desktop", "重开一下 Desktop".
+  model in memory and emitting pixels, not files. Needs a .pbip project.
+  Check: are disk files newer than the running instance? Reload: terminate without saving and
+  reopen. Shot: window to PNG, or -Text via UI Automation for models without vision.
+  Trigger - ALWAYS after writing any .tmdl, .pbir, visual.json or theme file: run Check, then
+  reload. Do not wait to be asked.
+  Trigger - reload: "reload pbi", "restart power bi desktop", "重开一下 Desktop", "重载一下".
   Trigger - check: "is desktop up to date", "Desktop 是最新的吗", "需要重载吗".
-  Trigger - shot: "screenshot the report", "show me the report", "看看现在报表", "截个图".
-  Trigger - diagnose (AUTO): a broken visual, blank page, or an error dialog is reported.
-  Do NOT use for Power BI Service or DAX correctness questions.
-  Run Check before Reload. Windows only.
+  Trigger - shot: "screenshot the report", "看看现在报表", "截个图".
+  Trigger - iterate unattended: "match the mockup", "keep going until it matches", "照着原型图做".
+  Trigger - diagnose (AUTO): a broken visual, blank page, or an error dialog appears.
+  Do NOT use for Power BI Service or DAX correctness. Windows only.
 
 version: 1.0.0
 license: MIT
@@ -68,6 +66,19 @@ Returns in ~2 s; a detached watcher keeps working in the background. Then **wait
 to finish** before doing anything else — a large model takes tens of seconds. The window title
 reads `Untitled - Power BI Desktop` (localized) while loading and becomes the project name when
 done.
+
+🔴 **Reload is not a data refresh, and you never need to trigger one.** Reopening re-reads the
+model definition and recomputes every DAX expression against the cached data — which is exactly
+what a measure, relationship, format or visual change requires. It does **not** go back to the
+source, and it does not need to:
+
+| Changed | Needs |
+|---|---|
+| Measures, relationships, columns, formatting, PBIR | Reload — this skill. Done |
+| Rows in the underlying source | A manual Refresh in Desktop — **the user's call, not yours** |
+
+Never click or automate Refresh. It re-queries the data source, takes minutes on a large model
+instead of seconds, and may hit a production database — a decision that belongs to the user.
 
 **Step 4 — Diagnose a failed reload**
 
@@ -177,8 +188,22 @@ precise — a name truncated to `SALES_DETAIL_BY_RE…` in the capture comes bac
 The steps above are single moves. This is how they compose into an iteration loop that does not
 stop for a human every round — the reason this skill exists.
 
-**Use it when** a prototype, mockup or explicit spec exists and the task is to make the report
-match it. **Do not use it** without one: see the stop condition below.
+**First, know which loop you are in. They use different oracles, and confusing them produces
+false conclusions:**
+
+| | Model layer | Report layer |
+|---|---|---|
+| The work | Measures, relationships, M | Layout, visuals, formatting |
+| The question | Is the number *correct*? | Does it *look* like the prototype? |
+| The oracle | **ADOMD/DAX against the live model** | The prototype image |
+| This skill's part | Reload so the model reflects the disk; Shot to read errors | The whole loop below |
+
+🔴 **Never judge numeric correctness from a capture.** Seeing a card render `1,234` proves the
+measure *evaluated*, not that `1,234` is right. A capture cannot validate a number — only a DAX
+query against the live model can, and that is outside this skill.
+
+**Use the loop below when** a prototype, mockup or explicit spec exists and the task is to make
+the report match it. **Do not use it** without one: see the stop condition.
 
 ```
 Task Progress:
@@ -199,10 +224,21 @@ exists, do not run this loop — do one round, show the user, and let them judge
 user is not editing in Desktop; re-asking every iteration destroys the point of running
 unattended. If the user does touch Desktop mid-run, stop the loop and re-confirm.
 
-**Step 5 is the part that cannot be faked.** State the differences concretely — "the KPI row is
-at y=120 but the mockup has it at y=80", not "close enough". If you cannot see the image, you
-cannot run this loop: use `-Text` for what the report *says*, and hand the layout question to
-the user.
+**Step 5 is the part that cannot be faked.** Every difference must be specific enough to
+translate directly into one edit:
+
+```
+Bad   "The layout is close to the mockup."
+      → not a comparison; nothing can be done with it
+
+Good  "KPI row sits at y=120, mockup has it at y=80."
+      "Card 3 title wraps to two lines, mockup keeps it on one."
+      "Legend is bottom-right, mockup puts it top-left."
+      → three differences, three edits
+```
+
+If you cannot see images, you cannot run this loop: use `-Text` for what the report *says*, and
+hand the layout question to the user.
 
 **Stop after two full rounds** that have not converged. Report what you changed, what you see
 now, and what still differs. A third round burns another model load and rarely finds what the
@@ -238,7 +274,7 @@ transcribe the whole screen.
 
 ## Rules
 
-- **Ask before every reload.** Two opposite situations exist and the tool cannot tell them apart:
+- **A reload needs human consent, because two opposite situations are indistinguishable:**
 
   | Situation | Correct action |
   |---|---|
@@ -247,7 +283,8 @@ transcribe the whole screen.
 
   Desktop's title bar carries no modified marker and window enumeration exposes no dirty state.
   Only the user knows. Never assume "the user does not edit in Desktop" — polishing the report
-  layer is their job by design.
+  layer is their job by design. This is information asymmetry, not a capability gap, which is
+  why consent is required — see the session-scope rule below for how often to ask.
 - **Always pass `-Path`.** The target instance is then identified by matching the project name
   against window titles, so another agent's Desktop is never killed. `pbi-reload.last.json` is
   shared machine-wide; without `-Path` you may inherit someone else's project.
@@ -268,7 +305,33 @@ transcribe the whole screen.
 - **Never expose secrets, tokens or passwords** found in config files, logs or captures.
 - **If you cannot read images, never call image mode and then describe the report** — that is
   inventing content. Use `-Text`, or hand the PNG path to the user.
-- **Be proactive.** After editing TMDL, offer the reload; do not wait to be asked.
+- **Act on your own, scaled to the risk.** Waiting to be told to reload puts a human back inside
+  the loop, which is the problem this skill exists to remove. Autonomy is graded by what the
+  action can destroy:
+
+  | Action | Risk | Behaviour |
+  |---|---|---|
+  | **Check** | none — read-only | Run it **immediately** after writing any project file. Never ask |
+  | **Shot** | none — read-only | Run it whenever you need to see the result. Never ask |
+  | **Reload** | high — terminates Desktop without saving | Session-scoped consent, below |
+
+  So: **every time you finish editing TMDL/PBIR, run Check without being asked.** If it reports
+  no change, say so and stop. If it reports a change, proceed to the reload rule.
+
+- **Get consent for reloads once per session, not once per reload.** The first time a reload is
+  warranted, say what you intend and what it requires:
+
+  > I'll reload Desktop to verify this, and do the same after each further edit. That discards
+  > anything unsaved in Desktop — please don't edit there while I work. OK?
+
+  After that, **announce and proceed without waiting** — state one line ("disk changed, reloading
+  now"), then run it. Do not block for a reply on every round; that is the cost this skill exists
+  to remove. Announcing keeps it visible — a reload blanks Desktop for tens of seconds, and
+  silence reads as a hang.
+
+  **Re-ask when the premise breaks**, not on a timer: the user says they edited in Desktop, they
+  take over the window themselves, or they tell you to stop.
+
 - **Match the user's language.** Chinese in, Chinese out.
 
 ## Failure handling

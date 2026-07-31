@@ -123,6 +123,20 @@ Reading an error off an image is guesswork; reading it as a string is a diagnosi
 > not tell you the measure is *correct*. For that, query the live model with DAX — that loop
 > already worked and this one does not replace it.
 
+**A reload is not a data refresh — and that is the point.** Reopening re-reads the model
+definition and recomputes every DAX expression against the cached data, which is exactly what a
+measure, relationship or formatting change needs. It never goes back to the source:
+
+| Changed | Needs |
+|---|---|
+| Measures, relationships, columns, formatting, PBIR | A reload. Seconds |
+| Rows in the underlying source | A manual Refresh — minutes, and the user's call |
+
+The distinction matters for the loop. Refreshing on every iteration would take minutes instead
+of seconds and could hit a production database, so the skill is explicitly told never to trigger
+one. Changing *how* something is calculated is iteration; changing *what data* it runs on is a
+new task, and a human decision.
+
 ### Two classes of failure, handled in opposite ways
 
 Reopening a project you just edited is exactly when it breaks — and the first move is to
@@ -189,6 +203,31 @@ Three rules keep it honest:
   the point of running unattended — but if you touch Desktop mid-run, the loop stops and re-asks
 - **Stop after two failed rounds.** Each round costs a full model load, and a third rarely finds
   what the first two missed
+
+---
+
+## The Agent Reaches For It Unprompted
+
+A tool that waits to be invoked keeps a human in the loop by construction. So the skill instructs
+the agent to act on its own, graded by what each action can destroy:
+
+| Action | Risk | Behaviour |
+|---|---|---|
+| **Check** | none — read-only | Runs **immediately** after any project file is written. Never asks |
+| **Shot** | none — read-only | Runs whenever the agent needs to see the result. Never asks |
+| **Reload** | high — terminates Desktop without saving | Consent **once per session**, then announce and proceed |
+
+The reload asymmetry matters. Asking every single time would put the human back in the inner
+loop — the exact cost this project exists to remove. Asking *never* would gamble with unsaved
+work. So consent is taken once, up front:
+
+> I'll reload Desktop to verify this, and do the same after each further edit. That discards
+> anything unsaved in Desktop — please don't edit there while I work. OK?
+
+After that the agent **announces and proceeds without waiting** — one line, then the reload. It
+does not block for a reply each round, but it never goes silent either: a reload blanks Desktop
+for tens of seconds, and silence reads as a hang. Consent is re-taken when the premise breaks —
+you say you edited in Desktop, you take over the window, or you tell it to stop.
 
 ---
 

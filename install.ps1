@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Install pbi-check-loop: scripts into ~\.claude	ools\, skill into ~\.claude\skills\.
+    Install pbi-check-loop: scripts into ~\.claude\tools\, skill into ~\.claude\skills\.
 
 .DESCRIPTION
     The consumer of these tools is an AI agent, not a human. So "installing" is mostly about
@@ -8,7 +8,7 @@
     and which pitfalls to avoid.
 
 .PARAMETER ToolsDir
-    Where the scripts go. Default ~\.claude	ools
+    Where the scripts go. Default ~\.claude\tools
 
 .PARAMETER SkillsDir
     Where the skill goes. Default ~\.claude\skills
