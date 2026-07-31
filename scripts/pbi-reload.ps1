@@ -360,8 +360,19 @@ Write-Step "Edition   : $edition"
 Write-Step "Title     : $($target.MainWindowTitle)"
 Write-Step "Started   : $($target.StartTime)"
 
-# Is the disk newer than Desktop? This is the direct basis for 'should we reload'
-if ($Path -and (Test-Path $Path)) {
+# Is the disk newer than Desktop? This is the direct basis for 'should we reload'.
+# Never skip this silently: an absent verdict reads exactly like "nothing changed",
+# and a caller would then keep working against a stale Desktop.
+if (-not $Path) {
+    Write-Host "`nDisk state UNKNOWN - no project path to compare against" -ForegroundColor Yellow
+    Write-Step "Pass -Path <file.pbip> to find out whether a reload is needed."
+}
+elseif (-not (Test-Path $Path)) {
+    Write-Host "`nDisk state UNKNOWN - the remembered path no longer exists" -ForegroundColor Yellow
+    Write-Step $Path
+    Write-Step "Pass -Path <file.pbip> to find out whether a reload is needed."
+}
+else {
     $projDir = Split-Path $Path -Parent
     $newer = @(Get-ChildItem $projDir -Recurse -File -Include *.tmdl,*.json,*.pbir,*.pbism -ErrorAction SilentlyContinue |
                Where-Object { $_.LastWriteTime -gt $target.StartTime })

@@ -45,6 +45,10 @@ Changes nothing. Reports PID, edition (regular vs. Report Server), window title,
 the associated `msmdsrv` PID, and whether any `*.tmdl / *.json / *.pbir / *.pbism` under the
 project is newer than the running instance. That last line is the decision.
 
+Pass `-Path` to get that verdict. Without it the report says `Disk state UNKNOWN` —
+**that is not the same as "no changes"**. Treat it as a question you have not answered yet:
+supply the path and run again rather than concluding the disk is clean.
+
 **Step 3 — Reload**
 
 Ask in conversation first: **"Any unsaved changes in Desktop?"** Pass `-Yes` only after the
@@ -342,6 +346,7 @@ transcribe the whole screen.
 | `Power BI Desktop is not running` | Nothing to reload | Ask whether to open the project, or open it with `-Path` |
 | `Several Desktop instances found` | Title match was ambiguous | Show the listed PIDs and editions, ask which, pass `-Id` |
 | `No path available` | No `-Path`, nothing remembered | Ask for the `.pbip` path |
+| `Disk state UNKNOWN` | Check ran without a path — the verdict is missing, not negative | Re-run with `-Path`; never read this as "no changes" |
 | `Stopped. Nothing was changed.` | `-Yes` was omitted | Correct behaviour — confirm with the user, then retry |
 | `WARNING: the running instance is '…' which does not match -Path` | Another project's Desktop | Stop and confirm before proceeding |
 | `Recorded window rect looks wrong` | Window was minimized or off-screen | Expected; it reopens at the default position |
