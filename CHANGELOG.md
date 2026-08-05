@@ -7,8 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Changes driven by a full day of real agent use on a ~670k row model.
-Every item below is something that actually cost time during that session.
+Changes driven by real agent use on a ~670k row model. Every item is something that
+actually cost time — the second batch came from using the first batch all day.
+
+### Second batch — what using `-Wait` all day exposed
+
+- **`Ready` now means the model engine is up, not just the window title.** The title flips
+  to the project name *while `msmdsrv` is still starting*; a DAX query fired at that moment
+  returns "table not found", which is indistinguishable from an edit that broke the model.
+  `-Wait` now also waits for the instance's `msmdsrv` child. Observed twice in one session:
+  once as a failed query, once as `pbi-shot` finding no window.
+- **`-Wait` and `-ListOnly` now print the Analysis Services endpoint** (`localhost:<port>`,
+  resolved parent PID → child `msmdsrv` → listening port).
+
+  This closes the last gap in the loop. A capture proves a visual *rendered*; only a DAX query
+  proves a number is *right* — so something must tell the caller where to send it. The obvious
+  source, `msmdsrv.port.txt`, is a trap with two projects open: the newest file belongs to
+  whichever loaded last, so the agent silently queries the **wrong model**, asks for a table
+  that lives in the project it was editing, and gets "table not found". That reads like a
+  broken edit and sends the investigation the wrong way. Happened during the session; the
+  workaround was hand-rolling the PID→port mapping, which every caller would otherwise repeat.
+- **`pbi-shot` no longer says "main window not found (it may still be loading)"** when the real
+  cause is a different instance. It now names the PID it searched and lists every running
+  Desktop with its title.
+- **`SKILL.md`: do not save reloads up to do them together.** The tempting version — *finish
+  investigating, then reload everything at once* — sounds efficient and loses work: while the
+  agent is away, a user Ctrl+S writes Desktop's in-memory model over the edits on disk.
+  Observed exactly that. Reload after each edit, even when the next step is only a lookup.
+
+### First batch
 
 ### Added
 

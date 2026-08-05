@@ -63,8 +63,8 @@ answer is no. See [Rules](#rules) — this cannot be skipped.
 | `-Path` | `.pbip` path. Remembered in `pbi-reload.last.json`. Always pass it explicitly |
 | `-Yes` | Asserts the user confirmed no unsaved changes. Without it the script only warns |
 | `-Id` | Which instance, when the title match is ambiguous |
-| `-ListOnly` | Check mode |
-| `-Wait` | Block until the model has finished loading, then return |
+| `-ListOnly` | Check mode. Also prints the Analysis Services endpoint |
+| `-Wait` | Block until the model engine is up, then return — and print its endpoint |
 | `-WaitTimeout` | How long `-Wait` waits, default 180 s |
 | `-NoDismiss` | Leave the sign-in dialog alone |
 | `-DismissTimeout` | Watcher lifetime, default 120 s |
@@ -80,7 +80,8 @@ against a half-loaded model fails or lies.
 ```
 ```
 Waiting for the model to finish loading (timeout 180s)...
-Ready after 23s - the title settled to the project name.
+Ready after 23s - title settled and the model engine is up.
+  Analysis Services: localhost:58894   [msmdsrv 29412]
 ```
 
 It returns `Ready`, `Desktop exited`, or a timeout that tells you to go read the dialog. Without
@@ -89,6 +90,22 @@ It returns `Ready`, `Desktop exited`, or a timeout that tells you to go read the
 Desktop (zh-CN shows a different word), so the check passes the instant any window appears and
 you query a model that is still loading. `-Wait` matches the *project name* instead, which only
 a finished load can produce, in any language.
+
+🔴 **`Ready` means two things, and the second one is why you can trust it.** The title settling
+is necessary but not sufficient — it flips to the project name while the model engine is still
+coming up, and a DAX query issued at that moment comes back *"table not found"*, which reads
+exactly like a broken edit. `-Wait` therefore also waits for the instance's `msmdsrv` child, and
+prints the endpoint it is listening on.
+
+**That endpoint is the other half of the loop.** A capture proves a visual *rendered*; only a
+DAX query proves a number is *right*. Take the `localhost:<port>` from the output and query it
+(ADOMD, Tabular Editor, DAX Studio — outside this skill's scope, but this is where you point it).
+
+⚠️ **Do not read `msmdsrv.port.txt` to find the port.** With two projects open, the newest port
+file belongs to whichever loaded last, so you can silently connect to the *wrong model* — and
+then a missing table looks like your edit broke something, when you are simply querying another
+project. The endpoint printed here is resolved by parent PID → child `msmdsrv` → listening port,
+which has no such ambiguity. `-ListOnly` prints it too.
 
 🔴 **Reload is not a data refresh, and you almost never need to trigger one.** Reopening re-reads
 the model definition and recomputes every DAX expression against the cached data — which is
@@ -282,6 +299,7 @@ Use the matching template. Do not narrate the mechanics.
 Desktop   PID {pid} · {edition} · {title}
 Disk      {changed, N files / no changes}
 Verdict   {reload recommended / no reload needed}
+AS        localhost:{port}        ← only when you are about to check numbers
 ```
 
 ### Check — Chinese
@@ -289,6 +307,7 @@ Verdict   {reload recommended / no reload needed}
 Desktop   PID {pid} · {edition} · {title}
 磁盘      {已变更，{N} 个文件 / 无变更}
 结论      {建议重载 / 不用重载}
+AS        localhost:{port}        ← 只在接下来要核对数值时才报
 ```
 
 **Reload:** one line for the outcome, then what was observed — where the window landed, whether
@@ -347,6 +366,13 @@ transcribe the whole screen.
   So: **every time you finish editing TMDL/PBIR, run Check without being asked.** If it reports
   no change, say so and stop. If it reports a change, proceed to the reload rule.
 
+  🔴 **Do not save reloads up to "do them together later."** The tempting version is: *I'll
+  investigate this data question first, then reload everything in one go.* It sounds efficient
+  and it loses work — while you are off doing something else, the user may hit Ctrl+S in
+  Desktop, and Desktop writes its **in-memory** model over your edits on disk. Observed: an
+  agent edited TMDL, went to run queries instead of reloading, and the next user save silently
+  reverted the edit. Reload after each edit, even when the next step is only a lookup.
+
 - **Get consent for reloads once per session, not once per reload.** The first time a reload is
   warranted, say what you intend and what it requires:
 
@@ -386,9 +412,10 @@ transcribe the whole screen.
 | `WARNING: the running instance is '…' which does not match -Path` | Another project's Desktop | Stop and confirm before proceeding |
 | `Recorded window rect looks wrong` | Window was minimized or off-screen | Expected; it reopens at the default position |
 | `PrintWindow failed; fell back to CopyFromScreen` | Raw screen pixels captured | Another window may occlude it — say so rather than trusting the image |
-| `PBIDesktop main window not found` | Still loading | Reload with `-Wait`; do not conclude the reload failed |
+| `No capturable window for PID …` | Wrong instance, or a reload whose window is not rebuilt yet. The message lists every running Desktop and its title — read that first | Match the PID against the list; if a reload just ran, use `-Wait` |
 | `Still loading after Ns` (from `-Wait`) | A dialog is most likely blocking the load | Read it: `pbi-shot.ps1 -Text`, then Step 4c |
 | `Desktop exited … without finishing the load` (from `-Wait`) | The process died mid-load | Class A. Check the project files you just wrote |
+| A DAX query returns `table not found` right after a reload | You queried before the engine was up, **or** you are connected to another project's instance | Use the endpoint printed by `-Wait`/`-ListOnly`; never read `msmdsrv.port.txt` |
 | Watcher log shows `restore done … MISMATCH` | Window restore did not settle | Report it; the reload itself still succeeded |
 | Desktop reopens but shows an error dialog | Class A — usually your own edit | Step 4c: read with `-Text`, close, fix, reopen |
 | Opens fine but one visual errors or is blank | Class B — report layer or one table | Step 4d: diagnose in place, keep it open |

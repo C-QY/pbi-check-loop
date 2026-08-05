@@ -306,6 +306,30 @@ function Test-RectSane([string]$Rect) {
 # "ready" the instant any window appears, and the caller then queries a half-loaded
 # model. Matching the project name has no such failure mode: only a finished load
 # ever produces it, in any language.
+# The Analysis Services instance behind one Desktop window: its msmdsrv child and
+# the port that child listens on.
+#
+# This matters more than it looks. Every Desktop spawns its own msmdsrv, and the
+# workspace folder's msmdsrv.port.txt is NOT a reliable way to find "the right one" -
+# with two projects open, the newest port file belongs to whichever loaded last, so a
+# caller that reads it can silently query the wrong model. Asking for a table that
+# lives in the other project then fails with "table not found", which reads like a
+# broken edit rather than a wrong connection. Resolving parent PID -> child msmdsrv
+# -> listening port has no such ambiguity.
+function Get-AsEndpoint([int]$DesktopPid) {
+    $msmd = @(Get-WmiObject Win32_Process -Filter "Name='msmdsrv.exe'" -ErrorAction SilentlyContinue |
+              Where-Object { $_.ParentProcessId -eq $DesktopPid })
+    if ($msmd.Count -eq 0) { return $null }
+    $mpid = $msmd[0].ProcessId
+    $port = $null
+    foreach ($line in (netstat -ano 2>$null)) {
+        if ($line -match '^\s*TCP\s+\S+?:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$') {
+            if ([int]$matches[2] -eq $mpid) { $port = $matches[1]; break }
+        }
+    }
+    return [pscustomobject]@{ Pid = $mpid; Port = $port }
+}
+
 function Wait-Loaded([int]$ProcId, [string]$ProjectPath, [int]$TimeoutSec) {
     $stem     = [WildcardPattern]::Escape([IO.Path]::GetFileNameWithoutExtension($ProjectPath))
     $pattern  = "$stem - *"
@@ -316,7 +340,14 @@ function Wait-Loaded([int]$ProcId, [string]$ProjectPath, [int]$TimeoutSec) {
         $elapsed = [int]((Get-Date) - $started).TotalSeconds
         if (-not $p) { return [pscustomobject]@{ State = 'gone'; Seconds = $elapsed } }
         if ($p.MainWindowTitle -like $pattern) {
-            return [pscustomobject]@{ State = 'ready'; Seconds = $elapsed }
+            # The title settling is necessary but NOT sufficient: it flips to the project
+            # name while the model engine is still coming up. Observed - a DAX query issued
+            # the moment the title changed came back "table not found". Wait for the
+            # msmdsrv child too, and hand its endpoint back so the caller can query it.
+            $as = Get-AsEndpoint -DesktopPid $ProcId
+            if ($as) {
+                return [pscustomobject]@{ State = 'ready'; Seconds = $elapsed; As = $as }
+            }
         }
         Start-Sleep -Milliseconds 800
     }
@@ -328,7 +359,12 @@ function Invoke-WaitReport([int]$ProcId, [string]$ProjectPath, [int]$TimeoutSec)
     $r = Wait-Loaded -ProcId $ProcId -ProjectPath $ProjectPath -TimeoutSec $TimeoutSec
     switch ($r.State) {
         'ready' {
-            Write-Host "Ready after $($r.Seconds)s - the title settled to the project name." -ForegroundColor Green
+            Write-Host "Ready after $($r.Seconds)s - title settled and the model engine is up." -ForegroundColor Green
+            if ($r.As) {
+                $ep = if ($r.As.Port) { "localhost:$($r.As.Port)" } else { "(port not resolved)" }
+                Write-Host "  Analysis Services: $ep   [msmdsrv $($r.As.Pid)]" -ForegroundColor Green
+                Write-Host "  Numbers can only be checked here - a screenshot cannot validate a value." -ForegroundColor DarkGray
+            }
         }
         'gone' {
             Write-Host "Desktop exited after $($r.Seconds)s without finishing the load." -ForegroundColor Red
@@ -436,6 +472,11 @@ else {
 $msmd = @(Get-WmiObject Win32_Process -Filter "Name='msmdsrv.exe'" -ErrorAction SilentlyContinue |
           Where-Object { $_.ParentProcessId -eq $target.Id })
 if ($msmd.Count -gt 0) { Write-Step "msmdsrv   : $(($msmd | ForEach-Object { $_.ProcessId }) -join ', ')" }
+
+# Report the endpoint on Check too - it is how a caller verifies numbers, and reading
+# msmdsrv.port.txt instead picks whichever project loaded last when several are open.
+$epNow = Get-AsEndpoint -DesktopPid $target.Id
+if ($epNow -and $epNow.Port) { Write-Step "AS        : localhost:$($epNow.Port)" }
 
 if ($ListOnly) { Write-Host "`n(-ListOnly - nothing was changed)"; return }
 

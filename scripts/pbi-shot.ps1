@@ -206,7 +206,21 @@ $cb = [Shot+EnumWindowsProc]{
     return $true
 }
 [void][Shot]::EnumWindows($cb, [IntPtr]::Zero)
-if ($found.Count -eq 0) { throw 'PBIDesktop main window not found (it may still be loading).' }
+if ($found.Count -eq 0) {
+    # Say which PID was searched and what else is running. The old message ("main window
+    # not found, it may still be loading") sends the caller to wait when the real cause
+    # is often a different instance, or a reload whose window has not been rebuilt yet.
+    $all = @(Get-Process -Name 'PBIDesktop' -ErrorAction SilentlyContinue |
+             ForEach-Object { "    PID $($_.Id)  '$($_.MainWindowTitle)'" })
+    $detail = if ($all.Count) {
+        "`n  Desktop processes running right now:`n" + ($all -join "`n")
+    } else {
+        "`n  No PBIDesktop process is running at all."
+    }
+    throw ("No capturable window for PID $targetPid." + $detail +
+           "`n  If a reload just happened, wait for `"pbi-reload.ps1 -Wait`" to report Ready -" +
+           "`n  it now also waits for the model engine, not just the window title.")
+}
 
 $win = $found[0]
 $hwnd = $win.Handle

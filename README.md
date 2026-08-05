@@ -179,7 +179,8 @@ DAX query against a half-loaded model fails or lies. `-Wait` blocks until it is 
 
 ```
 Waiting for the model to finish loading (timeout 180s)...
-Ready after 23s - the title settled to the project name.
+Ready after 23s - title settled and the model engine is up.
+  Analysis Services: localhost:58894   [msmdsrv 29412]
 ```
 
 It exists because the obvious way to poll is quietly broken. "Wait until the title is no longer
@@ -188,6 +189,29 @@ the check passes the moment any window appears and the caller queries a model th
 loading. `-Wait` matches the *project name* instead: only a finished load can produce it, in any
 language. Same reason the tool exists at all — the naive version of the check is the one that
 silently reports success.
+
+The title alone turned out not to be enough either. It flips to the project name **while the
+model engine is still starting**, and a DAX query fired at that instant comes back *"table not
+found"* — indistinguishable from an edit that broke the model. So `Ready` now means two things:
+the window settled *and* the instance's `msmdsrv` is up.
+
+### Finding the right instance to query
+
+Once it is ready, `-Wait` (and `-ListOnly`) print the endpoint:
+
+```
+AS        localhost:58894
+```
+
+This closes the last gap in the loop. A capture proves a visual *rendered*; only a DAX query
+proves a number is *right*, so something has to tell the agent where to send that query.
+
+The obvious source — `msmdsrv.port.txt` in the workspace folder — is a trap when more than one
+project is open: the newest port file belongs to whichever loaded last, so an agent can connect
+to a **different project's model**, ask for a table that lives in the one it was editing, and get
+"table not found". That reads like a broken edit and sends the investigation in the wrong
+direction entirely. Resolving parent PID → child `msmdsrv` → listening port has no such
+ambiguity, so the tool does that and hands back the answer.
 
 ### Two classes of failure, handled in opposite ways
 

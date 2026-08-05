@@ -71,7 +71,24 @@ fixed — do not reintroduce them.
     know to expect it — it was diagnosed as one on 2026-08-04 before the cause was found. A
     manual user Refresh is required, and the tool must not attempt it: refreshing re-queries the
     source, takes minutes, and may hit production.
-14. **`Select-String` cannot read UTF-8 files containing CJK text under PowerShell 5.1** — it
+14. 🔴 **The window title settles before the model engine is up.** Once it reads the project
+    name the load looks finished, but `msmdsrv` may still be starting — a DAX query issued at
+    that instant returns "table not found", which is indistinguishable from an edit that broke
+    the model. Observed twice in one session (a failed query, and `pbi-shot` finding no window
+    right after a `Ready`). Wait for the instance's `msmdsrv` child as well; that is what
+    `-Wait` now does.
+15. 🔴 **Never locate the AS port via `msmdsrv.port.txt`.** With two Desktops open, the newest
+    port file belongs to whichever project loaded last, so a caller reading it can connect to
+    the *other* project's model. Querying a table that exists only in the project being edited
+    then fails with "table not found" — and the obvious reading of that error ("my edit broke
+    something") is wrong, which is worse than not connecting at all. Resolve
+    parent PID → child `msmdsrv` (`Win32_Process.ParentProcessId`) → `netstat -ano` LISTENING
+    port instead. `-Wait` and `-ListOnly` print it.
+16. **A minimized window is not why a capture fails.** `pbi-shot` already restores minimized
+    windows with `SW_SHOWNOACTIVATE`. When it reports no window, the cause is almost always a
+    different instance, or a reload whose window has not been rebuilt yet — so the error now
+    lists every running Desktop with its title instead of blaming "still loading".
+17. **`Select-String` cannot read UTF-8 files containing CJK text under PowerShell 5.1** — it
     decodes as the ANSI codepage and silently matches nothing, which reads exactly like "the
     edit did not land". Verify such files with `[System.IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)`
     instead. Relevant when checking the scripts' own Chinese dialog titles.
