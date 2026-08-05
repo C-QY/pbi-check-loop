@@ -64,26 +64,46 @@ answer is no. See [Rules](#rules) — this cannot be skipped.
 | `-Yes` | Asserts the user confirmed no unsaved changes. Without it the script only warns |
 | `-Id` | Which instance, when the title match is ambiguous |
 | `-ListOnly` | Check mode |
+| `-Wait` | Block until the model has finished loading, then return |
+| `-WaitTimeout` | How long `-Wait` waits, default 180 s |
 | `-NoDismiss` | Leave the sign-in dialog alone |
 | `-DismissTimeout` | Watcher lifetime, default 120 s |
 
-Returns in ~2 s; a detached watcher keeps working in the background. Then **wait for the load
-to finish** before doing anything else — a large model takes tens of seconds. The window title
-reads `Untitled - Power BI Desktop` (localized) while loading and becomes the project name when
-done.
+Returns in ~2 s; a detached watcher keeps working in the background. A large model then takes
+tens of seconds to load, and **nothing downstream is valid until it finishes** — a DAX query
+against a half-loaded model fails or lies.
 
-🔴 **Reload is not a data refresh, and you never need to trigger one.** Reopening re-reads the
-model definition and recomputes every DAX expression against the cached data — which is exactly
-what a measure, relationship, format or visual change requires. It does **not** go back to the
-source, and it does not need to:
+**Pass `-Wait` and let the script handle it:**
+
+```powershell
+& "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -Path "...\project.pbip" -Yes -Wait
+```
+```
+Waiting for the model to finish loading (timeout 180s)...
+Ready after 23s - the title settled to the project name.
+```
+
+It returns `Ready`, `Desktop exited`, or a timeout that tells you to go read the dialog. Without
+`-Wait` you have to poll the title yourself — **do not**. The obvious way to poll is broken:
+"wait until the title is no longer `Untitled - Power BI Desktop`" fails outright on a localized
+Desktop (zh-CN shows a different word), so the check passes the instant any window appears and
+you query a model that is still loading. `-Wait` matches the *project name* instead, which only
+a finished load can produce, in any language.
+
+🔴 **Reload is not a data refresh, and you almost never need to trigger one.** Reopening re-reads
+the model definition and recomputes every DAX expression against the cached data — which is
+exactly what a measure, relationship, format or visual change requires. It does **not** go back
+to the source:
 
 | Changed | Needs |
 |---|---|
-| Measures, relationships, columns, formatting, PBIR | Reload — this skill. Done |
+| Measures, relationships, formatting, PBIR | Reload — this skill. Done |
 | Rows in the underlying source | A manual Refresh in Desktop — **the user's call, not yours** |
+| **A partition's M expression** (added a column, changed a query, new table) | **Reload *and* a manual Refresh.** Reloading invalidates that table's cached data — it comes back **empty**, and every table whose M references it goes empty too. Pages bound to them render blank. That is expected, not a broken edit. Say so, then ask the user to refresh |
 
-Never click or automate Refresh. It re-queries the data source, takes minutes on a large model
-instead of seconds, and may hit a production database — a decision that belongs to the user.
+Never click or automate Refresh yourself. It re-queries the data source, takes minutes on a large
+model instead of seconds, and may hit a production database — a decision that belongs to the user.
+Your job is to *tell them it is now required*, and why.
 
 **Step 4 — Diagnose a failed reload**
 
@@ -91,8 +111,12 @@ Reopening a project you just edited is exactly when it breaks. **First classify 
 the two classes need opposite handling.**
 
 **4a. Wait for the load to settle before judging anything.** A missing window or an empty canvas
-usually means *still loading*, not *failed*. Only conclude failure once the title has settled
-from `Untitled - Power BI Desktop` to the project name.
+usually means *still loading*, not *failed*. Reload with `-Wait` and let it tell you which one
+this is — `Ready` means the load finished and anything still wrong is a real failure; a timeout
+means something is blocking it, most often a dialog.
+
+⚠️ An empty canvas after a **partition M change** is not a failure at all — see the table in
+Step 3. That table's cache was invalidated and the data is waiting on a user Refresh.
 
 ```powershell
 & "$env:USERPROFILE\.claude\tools\pbi-reload.ps1" -ListOnly
@@ -329,10 +353,21 @@ transcribe the whole screen.
   > I'll reload Desktop to verify this, and do the same after each further edit. That discards
   > anything unsaved in Desktop — please don't edit there while I work. OK?
 
-  After that, **announce and proceed without waiting** — state one line ("disk changed, reloading
-  now"), then run it. Do not block for a reply on every round; that is the cost this skill exists
-  to remove. Announcing keeps it visible — a reload blanks Desktop for tens of seconds, and
-  silence reads as a hang.
+  After that, **announce and proceed without waiting** — state one line, then run it in the same
+  turn. Do not block for a reply on every round; that is the cost this skill exists to remove.
+  Announcing keeps it visible — a reload blanks Desktop for tens of seconds, and silence reads
+  as a hang.
+
+  **The line is a statement, not a question.** Say it and keep going:
+
+  > Disk changed, reloading now. *(after a partition M change, add:)* You'll need to hit Refresh
+  > once it's up.
+
+  Ending on "…OK?" or "shall I?" re-opens the consent you already have. It feels safer and is
+  not — the user granted this for the session, and re-asking every round is exactly the failure
+  mode this skill was built to remove. If you notice yourself hedging because *this* reload costs
+  the user something (a long refresh, a big model), that cost is real but it is still not a new
+  decision: state the cost in the same line and proceed.
 
   **Re-ask when the premise breaks**, not on a timer: the user says they edited in Desktop, they
   take over the window themselves, or they tell you to stop.
@@ -351,7 +386,9 @@ transcribe the whole screen.
 | `WARNING: the running instance is '…' which does not match -Path` | Another project's Desktop | Stop and confirm before proceeding |
 | `Recorded window rect looks wrong` | Window was minimized or off-screen | Expected; it reopens at the default position |
 | `PrintWindow failed; fell back to CopyFromScreen` | Raw screen pixels captured | Another window may occlude it — say so rather than trusting the image |
-| `PBIDesktop main window not found` | Still loading | Wait and retry; do not conclude the reload failed |
+| `PBIDesktop main window not found` | Still loading | Reload with `-Wait`; do not conclude the reload failed |
+| `Still loading after Ns` (from `-Wait`) | A dialog is most likely blocking the load | Read it: `pbi-shot.ps1 -Text`, then Step 4c |
+| `Desktop exited … without finishing the load` (from `-Wait`) | The process died mid-load | Class A. Check the project files you just wrote |
 | Watcher log shows `restore done … MISMATCH` | Window restore did not settle | Report it; the reload itself still succeeded |
 | Desktop reopens but shows an error dialog | Class A — usually your own edit | Step 4c: read with `-Text`, close, fix, reopen |
 | Opens fine but one visual errors or is blank | Class B — report layer or one table | Step 4d: diagnose in place, keep it open |

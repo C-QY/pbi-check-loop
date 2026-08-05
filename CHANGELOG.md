@@ -5,6 +5,40 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Changes driven by a full day of real agent use on a ~670k row model.
+Every item below is something that actually cost time during that session.
+
+### Added
+
+- **`pbi-reload.ps1 -Wait`** — block until the model has finished loading, then return.
+  Reports `Ready after Ns`, `Desktop exited …`, or a timeout pointing at `pbi-shot.ps1 -Text`.
+  `-WaitTimeout` sets the limit (default 180 s).
+
+  Without it every caller has to poll the window title, and **the intuitive way to poll is
+  silently wrong**: waiting for the title to stop being `Untitled - Power BI Desktop` fails on a
+  localized Desktop — zh-CN shows a different word entirely — so the check passes the instant any
+  window appears, and the agent then queries a half-loaded model. Observed live: a hand-written
+  poll reported "ready" while the model was still loading. `-Wait` matches the *project name*,
+  which only a finished load can produce, in any language.
+
+### Changed
+
+- **`SKILL.md` / both READMEs — the "reload is not a refresh" table gained its missing third row.**
+  Changing a **partition's M expression** needs a reload *and* a manual Refresh: reloading
+  invalidates that table's cached data, so it comes back **empty**, and every table whose M
+  references it goes empty too. Pages bound to them render blank — which looks exactly like a
+  broken edit and was diagnosed as one during the session before the cause was found. The agent
+  is now told to recognise the symptom, say so, and hand the Refresh back to the user.
+- **`SKILL.md` — the session-scoped reload consent now ships with a line to say.**
+  "Announce and proceed" was too abstract to hold under pressure: when a reload costs the user a
+  long refresh, an agent re-opens the consent it already has ("…OK?"), which is the exact failure
+  mode this skill exists to remove. The rule now supplies a statement to copy, and names the
+  hedging impulse so it can be recognised and skipped.
+- **`SKILL.md` — failure-handling table** gained the two `-Wait` outcomes (timeout → read the
+  dialog; process exited → Class A).
+
 ## [1.0.0] - 2026-07-30
 
 First release. Both tools verified end to end on a dual-monitor Windows 11 machine

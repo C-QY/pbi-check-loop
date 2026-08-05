@@ -33,6 +33,8 @@ param(
     [switch]$ListOnly,
     [switch]$NoDismiss,
     [switch]$Yes,               # Asserts 'no unsaved changes in Desktop'. Without it the script only warns
+    [switch]$Wait,              # Block until the model has finished loading, then return
+    [int]$WaitTimeout = 180,
     [int]$DismissTimeout = 120,
     [int]$WatchPid = 0,         # Internal: run as the detached watcher. Do not pass manually
     [string]$RestoreRect = '',  # Internal: "L,T,R,B" - put the window back after reopening
@@ -295,6 +297,49 @@ function Test-RectSane([string]$Rect) {
     return $false
 }
 
+# Block until the model has finished loading, so a caller does not have to poll.
+#
+# "Loaded" is detected by the window title becoming the project name. That choice is
+# deliberate. The obvious alternative - wait until the title is no longer
+# "Untitled - Power BI Desktop" - is broken: that string is localized (zh-CN shows
+# a different word entirely), so a negative match against the English one reports
+# "ready" the instant any window appears, and the caller then queries a half-loaded
+# model. Matching the project name has no such failure mode: only a finished load
+# ever produces it, in any language.
+function Wait-Loaded([int]$ProcId, [string]$ProjectPath, [int]$TimeoutSec) {
+    $stem     = [WildcardPattern]::Escape([IO.Path]::GetFileNameWithoutExtension($ProjectPath))
+    $pattern  = "$stem - *"
+    $started  = Get-Date
+    $deadline = $started.AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $p = Get-Process -Id $ProcId -ErrorAction SilentlyContinue
+        $elapsed = [int]((Get-Date) - $started).TotalSeconds
+        if (-not $p) { return [pscustomobject]@{ State = 'gone'; Seconds = $elapsed } }
+        if ($p.MainWindowTitle -like $pattern) {
+            return [pscustomobject]@{ State = 'ready'; Seconds = $elapsed }
+        }
+        Start-Sleep -Milliseconds 800
+    }
+    return [pscustomobject]@{ State = 'timeout'; Seconds = $TimeoutSec }
+}
+
+function Invoke-WaitReport([int]$ProcId, [string]$ProjectPath, [int]$TimeoutSec) {
+    Write-Host "`nWaiting for the model to finish loading (timeout ${TimeoutSec}s)..."
+    $r = Wait-Loaded -ProcId $ProcId -ProjectPath $ProjectPath -TimeoutSec $TimeoutSec
+    switch ($r.State) {
+        'ready' {
+            Write-Host "Ready after $($r.Seconds)s - the title settled to the project name." -ForegroundColor Green
+        }
+        'gone' {
+            Write-Host "Desktop exited after $($r.Seconds)s without finishing the load." -ForegroundColor Red
+        }
+        'timeout' {
+            Write-Host "Still loading after ${TimeoutSec}s. A dialog may be blocking it - read it with:" -ForegroundColor Yellow
+            Write-Host "  pbi-shot.ps1 -Text" -ForegroundColor Yellow
+        }
+    }
+}
+
 # ---------- 1. Resolve the target .pbip ----------
 if (-not $Path -and (Test-Path $memFile)) {
     try {
@@ -317,6 +362,7 @@ if ($procs.Count -eq 0) {
     @{ Path = $Path } | ConvertTo-Json | Out-File $memFile -Encoding utf8
     Start-Watcher -ProcId $np.Id -Rect '' -WasMax $false
     Write-Host "Started (regular edition)."
+    if ($Wait) { Invoke-WaitReport -ProcId $np.Id -ProjectPath $Path -TimeoutSec $WaitTimeout }
     return
 }
 
@@ -459,3 +505,5 @@ Start-Watcher -ProcId $newProc.Id `
 
 Write-Host "`nDone. Desktop is loading - a large model takes a while."
 Write-Host "Watcher log: $logFile"
+
+if ($Wait) { Invoke-WaitReport -ProcId $newProc.Id -ProjectPath $Path -TimeoutSec $WaitTimeout }

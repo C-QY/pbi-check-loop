@@ -158,13 +158,36 @@ measure, relationship or formatting change needs. It never goes back to the sour
 
 | Changed | Needs |
 |---|---|
-| Measures, relationships, columns, formatting, PBIR | A reload. Seconds |
+| Measures, relationships, formatting, PBIR | A reload. Seconds |
 | Rows in the underlying source | A manual Refresh — minutes, and the user's call |
+| **A partition's M expression** | **Both.** Reloading invalidates that table's cached data — it comes back empty, and so does every table whose M references it. Expected, not a broken edit |
 
 The distinction matters for the loop. Refreshing on every iteration would take minutes instead
 of seconds and could hit a production database, so the skill is explicitly told never to trigger
 one. Changing *how* something is calculated is iteration; changing *what data* it runs on is a
 new task, and a human decision.
+
+That third row is the one that surprises people, so the skill spells out the symptom: after an M
+change the pages bound to that table render blank, which looks exactly like a broken edit. The
+agent is told to recognise it, say so, and hand the Refresh back to the user rather than quietly
+assuming it broke something.
+
+### Waiting for the load to finish
+
+A large model takes tens of seconds to open, and nothing downstream is valid until it does — a
+DAX query against a half-loaded model fails or lies. `-Wait` blocks until it is ready:
+
+```
+Waiting for the model to finish loading (timeout 180s)...
+Ready after 23s - the title settled to the project name.
+```
+
+It exists because the obvious way to poll is quietly broken. "Wait until the title is no longer
+`Untitled - Power BI Desktop`" fails on a localized Desktop — zh-CN shows a different word — so
+the check passes the moment any window appears and the caller queries a model that is still
+loading. `-Wait` matches the *project name* instead: only a finished load can produce it, in any
+language. Same reason the tool exists at all — the naive version of the check is the one that
+silently reports success.
 
 ### Two classes of failure, handled in opposite ways
 

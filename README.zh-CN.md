@@ -26,47 +26,6 @@ irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 
 ---
 
-## 效果预览
-
-**Check —— 到底该不该重载：**
-
-```
-Current instance
-  PID       : 36292
-  Edition   : regular
-  Title     : Sales Analysis - Power BI Desktop
-  Started   : 07/30/2026 15:45:03
-
-Disk changed since Desktop opened - reload needed
-  15:07:50  measures.tmdl
-  14:55:27  relationships.tmdl
-```
-
-**Reload —— 约 2 秒返回，剩下的交给后台守候进程：**
-
-```
-Restarting
-  Window rect recorded: -8,-8,2568,1400 (maximized)
-  Terminating Desktop (no save)...
-  Cleaning up orphaned msmdsrv 30512...
-  Reopening [regular] Sales Analysis.pbip ...
-  Watcher started (dismiss sign-in + restore window, 120s)
-```
-
-**守候日志 —— 活干完立刻收工，不空占进程：**
-
-```
-[16:34:22] watch start pid=24868 timeout=120s
-[16:34:25] window settled L=-8 T=-8 2576x1408 maximized (still watching to 45s)
-[16:34:29] dismissed title='Sign in to Power BI'
-[16:35:07] restore done final L=-8 T=-8 2576x1408 target 2576x1408 -> OK
-[16:35:19] watch end (work done), dismissed 1
-```
-
-*（真实输出，项目名已替换。脚本输出为英文。）*
-
----
-
 ## 全局视角：AI 工作流断在哪
 
 PBIP 格式是前提——是把 PBI 当做**项目文件**进行版本控制、团队协同开发的技术，
@@ -185,11 +144,31 @@ agent 能写 `visual.json`，却看不见它渲染成什么样——对没对、
 
 | 改了什么 | 需要什么 |
 |---|---|
-| 度量、关系、列、格式、PBIR | 重载即可，秒级 |
+| 度量、关系、格式、PBIR | 重载即可，秒级 |
 | 源表里的数据行 | 手动点 Refresh——分钟级，而且是人的决定 |
+| **分区的 M 表达式**（加列、改查询、加表） | **两件都要。** 重载会让该表的缓存数据作废——它会变成**空表**，所有 M 里引用它的表也跟着变空，绑在上面的页面渲染成空白。这是预期行为，不是改坏了 |
 
 这个区分对闭环很重要。每轮都刷新会把秒级变成分钟级，还可能真的去连生产库，
 所以 skill 里明确禁止 agent 触发刷新。**改"怎么算"是迭代；改"算哪批数据"是新任务，也是人的决定。**
+
+第三行是最容易误判的一条，所以 skill 里把症状写明白了：改完 M 之后，绑在那张表上的页面会渲染成
+空白，看起来和"改坏了"一模一样。要让 agent 认得出这个症状、主动说明，并把 Refresh 交还给用户，
+而不是闷头以为自己搞砸了。
+
+### 等模型加载完
+
+大模型打开要几十秒，**在它加载完之前，下游任何动作都不作数**——对着半加载的模型跑 DAX，
+要么报错要么给你假数据。`-Wait` 会阻塞到就绪为止：
+
+```
+Waiting for the model to finish loading (timeout 180s)...
+Ready after 23s - the title settled to the project name.
+```
+
+它存在的原因是：**最直觉的那种轮询写法是坏的**。"等到标题不再是 `Untitled - Power BI Desktop`"
+在中文版 Desktop 上直接失效——中文显示的是「无标题」，于是这个判断在任何窗口一出现就通过了，
+调用方随即去查一个还在加载的模型。`-Wait` 改成匹配**项目名**：只有加载完成才会产生它，且不分语言。
+这和这个工具存在的理由是同一个——朴素版本的检查，恰恰是会静默报成功的那个。
 
 ### 两类报错，处理方式相反
 
@@ -336,6 +315,47 @@ Reload 的不对称很关键：**每次都问**等于把人重新塞回内环—
 
 > ⚠️ **只有图片模式需要视觉能力。** 纯文本模型调了图片模式再去描述报表，就是在编造内容——
 > 那比没有截图更糟。skill 里明确要求这类模型改用 `-Text`，或者把路径交给人看。
+
+---
+
+## 效果预览
+
+**Check —— 到底该不该重载：**
+
+```
+Current instance
+  PID       : 36292
+  Edition   : regular
+  Title     : Sales Analysis - Power BI Desktop
+  Started   : 07/30/2026 15:45:03
+
+Disk changed since Desktop opened - reload needed
+  15:07:50  measures.tmdl
+  14:55:27  relationships.tmdl
+```
+
+**Reload —— 约 2 秒返回，剩下的交给后台守候进程：**
+
+```
+Restarting
+  Window rect recorded: -8,-8,2568,1400 (maximized)
+  Terminating Desktop (no save)...
+  Cleaning up orphaned msmdsrv 30512...
+  Reopening [regular] Sales Analysis.pbip ...
+  Watcher started (dismiss sign-in + restore window, 120s)
+```
+
+**守候日志 —— 活干完立刻收工，不空占进程：**
+
+```
+[16:34:22] watch start pid=24868 timeout=120s
+[16:34:25] window settled L=-8 T=-8 2576x1408 maximized (still watching to 45s)
+[16:34:29] dismissed title='Sign in to Power BI'
+[16:35:07] restore done final L=-8 T=-8 2576x1408 target 2576x1408 -> OK
+[16:35:19] watch end (work done), dismissed 1
+```
+
+*（真实输出，项目名已替换。脚本输出为英文。）*
 
 ---
 
