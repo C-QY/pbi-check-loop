@@ -58,6 +58,23 @@ fixed — do not reintroduce them.
     (minimum size + must intersect some screen) and skip restoration on failure. The
     end-of-restore verdict must compare position *and* size: a width-only check once printed
     `OK` for a window sitting off-screen.
+12. 🔴 **Never detect "loading finished" by a negative match on `Untitled`.** The loading title is
+    localized — a zh-CN Desktop shows a different word entirely — so `title -notlike "*Untitled*"`
+    passes the instant any window appears, and the caller queries a model that is still loading.
+    Observed 2026-08-04: a hand-written poll reported ready mid-load; only a follow-up `-ListOnly`
+    revealed the truth. Match the **project name** (`"$stem - *"`) instead — only a finished load
+    can produce it, in any language. This is what `-Wait` does.
+13. 🔴 **Reloading after a partition's M expression changed leaves that table empty.** The cached
+    data is invalidated, so the table comes back with 0 rows, and every table whose M references
+    it goes empty too (observed: a fact table and the date table built from it, both 0 rows;
+    pages bound to them rendered blank). This is indistinguishable from a broken edit unless you
+    know to expect it — it was diagnosed as one on 2026-08-04 before the cause was found. A
+    manual user Refresh is required, and the tool must not attempt it: refreshing re-queries the
+    source, takes minutes, and may hit production.
+14. **`Select-String` cannot read UTF-8 files containing CJK text under PowerShell 5.1** — it
+    decodes as the ANSI codepage and silently matches nothing, which reads exactly like "the
+    edit did not land". Verify such files with `[System.IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)`
+    instead. Relevant when checking the scripts' own Chinese dialog titles.
 
 ## Unresolved
 
