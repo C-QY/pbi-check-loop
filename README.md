@@ -22,6 +22,8 @@ irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 
 Restart Claude Code and it is live. [Full install notes ↓](#install)
 
+Already using the June 2026 **Desktop Bridge**? [How this relates ↓](#relationship-to-the-power-bi-desktop-bridge)
+
 ---
 
 ## The Bigger Picture: Where the AI Workflow Breaks
@@ -459,14 +461,48 @@ file-layer conflict this tool cannot serialize. Don't structure work that way.
 
 ---
 
+## Relationship to the Power BI Desktop Bridge
+
+Power BI Desktop shipped a **Desktop Bridge** in June 2026 — preview, Desktop `2.155.756.0` or
+later, behind a Preview Features toggle. It is a local JSON-RPC server hosted inside the Desktop
+process, and it exposes four methods: `bridge.manifest`, `application.state.get/v1`,
+`file.reload/v1`, and `report.snapshot.capture/v1`.
+
+Two of those overlap directly with what is here, and **where they overlap, prefer the Bridge.**
+Its reload runs in-process — no restart, no full model load, and nothing destroyed if you had
+unsaved changes. Its snapshot renders the report internally instead of capturing a window. Both
+are cleaner than driving Desktop from the outside, which is what these scripts do.
+
+What those four methods leave open:
+
+- **Reach.** The Bridge needs a recent build and a preview toggle. Managed corporate installs do
+  not move quickly, and Power BI Report Server Desktop is a separate product where I have found
+  no indication the Bridge exists at all. A PowerShell script runs against whatever is installed.
+- **Errors.** `application.state.get/v1` returns `currentFilePath` and `hasUnsavedChanges` —
+  nothing else. When Desktop rejects a file, no method, trace log, stderr, or event log says so
+  ([microsoft/skills-for-fabric#40](https://github.com/microsoft/skills-for-fabric/issues/40));
+  the error exists only as a dialog on screen. Scraping that dialog is crude, but an agent that
+  cannot tell *loaded* from *refused* cannot recover from its own mistakes — which is the whole
+  of Loop 1.
+- **The model.** No port, no query surface. A snapshot proves the report *rendered*; it cannot
+  prove the numbers are *right*. `pbi-reload -Wait` prints the Analysis Services port so an ADOMD
+  client can go check, and it resolves that port by process ancestry rather than from
+  `msmdsrv.port.txt` — which silently points at the wrong project when two are open.
+
+**I have not tested the Bridge.** The build on this machine is `2.150.2455.0`, below its floor,
+so everything above is read from documentation and other people's write-ups rather than from a
+session I ran. Corrections welcome.
+
+---
+
 ## Design Principles
 
 **Fast · Lightweight · Universal** — the scripts collect metadata only, never file content.
 
 | Layer | Content | Token cost |
 |---|---|---|
-| L1 | `SKILL.md` frontmatter | ~255 tokens per session, used or not |
-| L2 | `SKILL.md` body | ~1900 tokens, loaded only when triggered |
+| L1 | `SKILL.md` frontmatter | ~285 tokens per session, used or not |
+| L2 | `SKILL.md` body | ~5600 tokens, loaded only when triggered |
 | L3 | `scripts/*.ps1` | Executed, never read — zero tokens |
 
 ---
@@ -504,7 +540,7 @@ went into the empirical findings — the sign-in dialog appears on an 11-second 
 must be detached or it dies with the calling session, `IsZoomed` returns `True` for a window that
 was never actually expanded. **Anyone rebuilding this hits the same walls.**
 
-The value is in the eleven findings in [`docs/FINDINGS.md`](docs/FINDINGS.md), not the code.
+The value is in the findings in [`docs/FINDINGS.md`](docs/FINDINGS.md), not the code.
 
 ---
 

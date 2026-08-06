@@ -24,6 +24,8 @@ irm https://raw.githubusercontent.com/C-QY/pbi-check-loop/main/get.ps1 | iex
 
 装完重启 Claude Code 即可生效。[完整安装说明 ↓](#安装)
 
+已经在用 2026 年 6 月的 **Desktop Bridge**？[两者什么关系 ↓](#和-power-bi-desktop-bridge-的关系)
+
 ---
 
 ## 全局视角：AI 工作流断在哪
@@ -418,14 +420,43 @@ cd pbi-check-loop
 
 ---
 
+## 和 Power BI Desktop Bridge 的关系
+
+Power BI Desktop 在 2026 年 6 月发布了 **Desktop Bridge** —— 预览版，要求 Desktop `2.155.756.0`
+及以上，且位于 Preview Features 开关下。它是跑在 Desktop 进程内的本地 JSON-RPC 服务，一共四个
+方法：`bridge.manifest`、`application.state.get/v1`、`file.reload/v1`、`report.snapshot.capture/v1`。
+
+其中两个和本项目直接重合，**重合的部分，优先用 Bridge。** 它的 reload 是进程内完成的 —— 不重启、
+不重新加载模型，有未保存改动也不会被抹掉；它的截图是内部渲染报表，不是抓窗口。两样都比从外面驱动
+Desktop 干净，而从外面驱动正是这两个脚本在做的事。
+
+这四个方法没覆盖的：
+
+- **覆盖面。** Bridge 要求较新的 build 加一个预览开关。企业统管的安装不会更新得那么快，而
+  Power BI Report Server 版 Desktop 是另一条产品线，我没有找到任何迹象表明 Bridge 在那里存在。
+  PowerShell 脚本则装的是哪个版本就跑哪个版本。
+- **报错。** `application.state.get/v1` 只返回 `currentFilePath` 和 `hasUnsavedChanges`，没有别的。
+  Desktop 拒绝加载一个文件时，没有任何方法、追踪日志、stderr 或事件日志会说明这件事
+  （[microsoft/skills-for-fabric#40](https://github.com/microsoft/skills-for-fabric/issues/40)）——
+  报错只以屏幕上一个对话框的形式存在。去刮那个对话框的文字很粗糙，但一个分不清「加载成功」和
+  「被拒绝」的 agent，没法从自己的错误里恢复，而那正是 Loop 1 的全部意义。
+- **模型。** 没有端口，也没有查询入口。截图能证明报表**渲染出来了**，证明不了数字**是对的**。
+  `pbi-reload -Wait` 会打印 Analysis Services 端口，好让 ADOMD 客户端去核对；而且它是按进程血缘
+  解析这个端口的，不读 `msmdsrv.port.txt` —— 后者在同时打开两个项目时会静默指向另一个项目。
+
+**我没有实测过 Bridge。** 本机的 build 是 `2.150.2455.0`，低于它的门槛，所以上面这些都是读文档和
+别人的记录得来的，不是我自己跑出来的。欢迎指正。
+
+---
+
 ## 设计原则
 
 **快速 · 轻量 · 通用** —— 脚本只采集元数据，从不读取文件内容。
 
 | 层 | 内容 | Token 成本 |
 |---|---|---|
-| L1 | `SKILL.md` frontmatter | 每个会话约 255 tokens，用不用都付 |
-| L2 | `SKILL.md` 正文 | 约 1900 tokens，触发后才加载 |
+| L1 | `SKILL.md` frontmatter | 每个会话约 285 tokens，用不用都付 |
+| L2 | `SKILL.md` 正文 | 约 5600 tokens，触发后才加载 |
 | L3 | `scripts/*.ps1` | 执行而非读取，零 token |
 
 ---
@@ -458,7 +489,7 @@ Figma、Unity 之类我一个都没验证过。**当成一个值得去测的假�
 登录弹窗延迟 11 秒才出现、守候进程必须独立否则随会话一起死、`IsZoomed` 对一个根本没被撑开的
 窗口返回 `True`。**任何人重做一遍，都会撞上同样的墙。**
 
-价值在 [`docs/FINDINGS.md`](docs/FINDINGS.md) 里那十一条实证，不在代码。
+价值在 [`docs/FINDINGS.md`](docs/FINDINGS.md) 里那些实证，不在代码。
 
 ---
 
